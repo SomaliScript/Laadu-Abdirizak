@@ -182,8 +182,12 @@ module.exports = (io) => {
      * @returns {boolean} - True if the position is locked, false otherwise.
      */
     function isPositionLocked(gameState, position, opponentId) {
-      // Exclude base positions (positions ≥ 500) and home positions
-      if (position >= 500 || HOME_POSITIONS.includes(position)) {
+      // Exclude base positions (positions >= 500) and home positions
+      if (
+        position >= 500 || 
+        BASE_POSITIONS[opponentId].includes(position) || 
+        HOME_POSITIONS[opponentId] === position
+      ) {
         return false;
       }
 
