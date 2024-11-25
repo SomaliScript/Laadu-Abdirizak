@@ -81,6 +81,7 @@ export class Ludo {
 
   /**
    * Handler for when the dice is rolled.
+   * @param {Object} data - Data containing playerId, diceValue, and movablePieces.
    */
   onDiceRolled({ playerId, diceValue, movablePieces }) {
     this.diceValue = diceValue;
@@ -95,7 +96,7 @@ export class Ludo {
         console.log('It is my turn. Highlighting eligible pieces.');
         this.highlightEligiblePieces(movablePieces);
       } else {
-        // No movable pieces; this should not happen as server handles turn skipping
+        // No movable pieces; server should handle turn skipping
         this.state = STATE.DICE_NOT_ROLLED;
         UI.disableDice();
       }
@@ -107,10 +108,9 @@ export class Ludo {
 
   /**
    * Handler for when the player misses their turn due to locked positions.
+   * @param {Object} data - Data containing playerId, diceValue, and reason.
    */
   onPlayerMissedTurn({ playerId, diceValue, reason }) {
-    console.log(`onPlayerMissedTurn: Player ${playerId} missed their turn due to ${reason}`);
-
     if (playerId === this.playerId) {
       alert(`You missed your turn: ${reason}`);
       this.state = STATE.DICE_NOT_ROLLED;
@@ -122,8 +122,9 @@ export class Ludo {
       UI.setTurn(this.getCurrentPlayerId());
     }
 
-    // Removed the manual turn increment to prevent desynchronization
-    // this.turn = (this.turn + 1) % this.players.length; // REMOVE THIS LINE
+    // Update turn in UI
+    this.turn = (this.turn + 1) % this.players.length;
+    UI.setTurn(this.getCurrentPlayerId());
   }
 
   /**
@@ -194,6 +195,9 @@ export class Ludo {
 
   /**
    * Sets the piece's position locally.
+   * @param {string} player - The player ID.
+   * @param {number} piece - The piece index.
+   * @param {number} newPosition - The new position of the piece.
    */
   setPiecePosition(player, piece, newPosition) {
     this.currentPositions[player][piece] = newPosition;
@@ -305,6 +309,8 @@ export class Ludo {
 
   /**
    * Determines which pieces are eligible to move.
+   * @param {string} player - The player ID.
+   * @returns {number[]} - Array of eligible piece indices.
    */
   getEligiblePieces(player) {
     const pieces = this.currentPositions[player];
@@ -351,6 +357,7 @@ export class Ludo {
 
   /**
    * Gets the current player's ID based on the turn.
+   * @returns {string} - The current player's ID.
    */
   getCurrentPlayerId() {
     return this.getPlayerIdByIndex(this.turn);
@@ -358,6 +365,8 @@ export class Ludo {
 
   /**
    * Gets the player ID by index.
+   * @param {number} index - The player index.
+   * @returns {string} - The player ID.
    */
   getPlayerIdByIndex(index) {
     return this.players[index];

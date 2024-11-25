@@ -174,13 +174,19 @@ module.exports = (io) => {
     }
 
     /**
-     * Checks if a position is locked (occupied by two or more opponent pieces).
+     * Checks if a position is locked (occupied by two or more opponent pieces),
+     * excluding base and home positions.
      * @param {Object} gameState - The current game state.
      * @param {number} position - The position to check.
      * @param {string} opponentId - The opponent's player ID.
      * @returns {boolean} - True if the position is locked, false otherwise.
      */
     function isPositionLocked(gameState, position, opponentId) {
+      // Exclude base positions (positions ≥ 500) and home positions
+      if (position >= 500 || HOME_POSITIONS.includes(position)) {
+        return false;
+      }
+
       const opponentPieces = gameState.currentPositions[opponentId];
       let count = 0;
       opponentPieces.forEach((pos) => {
@@ -237,15 +243,11 @@ module.exports = (io) => {
      */
     function handleDiceRoll(room, socketId) {
       const game = games[room];
-      if (!game) {
-        console.log(`handleDiceRoll: No game found for room ${room}`);
-        return;
-      }
+      if (!game) return;
 
       const currentPlayer = game.players[game.gameState.turn];
       if (currentPlayer.socketId !== socketId) {
         io.to(socketId).emit('errorMessage', 'It is not your turn to roll the dice.');
-        console.log(`handleDiceRoll: Socket ${socketId} attempted to roll dice out of turn.`);
         return;
       }
 
@@ -272,7 +274,6 @@ module.exports = (io) => {
       const opponentId = getOpponentId(game.players, currentPlayer.playerId);
       if (!opponentId) {
         io.to(socketId).emit('errorMessage', 'Opponent not found.');
-        console.log(`handleDiceRoll: Opponent not found for room ${room}`);
         return;
       }
 
@@ -328,15 +329,11 @@ module.exports = (io) => {
      */
     function handleMakeMove(room, socketId, data) {
       const game = games[room];
-      if (!game) {
-        console.log(`handleMakeMove: No game found for room ${room}`);
-        return;
-      }
+      if (!game) return;
 
       const currentPlayer = game.players[game.gameState.turn];
       if (currentPlayer.socketId !== socketId) {
         io.to(socketId).emit('errorMessage', 'It is not your turn to move.');
-        console.log(`handleMakeMove: Socket ${socketId} attempted to move out of turn.`);
         return;
       }
 
@@ -347,7 +344,6 @@ module.exports = (io) => {
       const isValid = validateMove(game.gameState, playerId, pieceIndex);
       if (!isValid) {
         io.to(socketId).emit('errorMessage', 'Invalid move.');
-        console.log(`handleMakeMove: Invalid move by Player ${playerId}, Piece ${pieceIndex}`);
         return;
       }
 
@@ -358,7 +354,6 @@ module.exports = (io) => {
       if (hasPlayerWon(game.gameState, playerId)) {
         io.in(room).emit('gameOver', { winner: playerId });
         delete games[room]; // End the game
-        console.log(`Player ${playerId} has won the game in ${room}`);
         return;
       }
 
@@ -376,8 +371,6 @@ module.exports = (io) => {
         gameState: game.gameState,
         moveData: moveData,
       });
-
-      console.log(`Player ${playerId} moved Piece ${pieceIndex} in ${room}`);
     }
 
     /**
@@ -387,15 +380,11 @@ module.exports = (io) => {
      */
     function handleNoMoves(room, socketId) {
       const game = games[room];
-      if (!game) {
-        console.log(`handleNoMoves: No game found for room ${room}`);
-        return;
-      }
+      if (!game) return;
 
       const currentPlayer = game.players[game.gameState.turn];
       if (currentPlayer.socketId !== socketId) {
         io.to(socketId).emit('errorMessage', 'It is not your turn.');
-        console.log(`handleNoMoves: Socket ${socketId} attempted to end turn out of turn.`);
         return;
       }
 
@@ -405,8 +394,6 @@ module.exports = (io) => {
 
       // Send updated game state to clients
       io.in(room).emit('updateGameState', { gameState: game.gameState });
-
-      console.log(`Player ${currentPlayer.playerId} has no moves and ended their turn in ${room}`);
     }
 
     /**
@@ -442,7 +429,7 @@ module.exports = (io) => {
 
       // Check if the new position is locked by opponent
       const opponentId = getOpponentId(game.players, playerId);
-      if (opponentId && isPositionLocked(gameState, newPosition, opponentId)) {
+      if (isPositionLocked(gameState, newPosition, opponentId)) {
         return false; // Move is blocked
       }
 
