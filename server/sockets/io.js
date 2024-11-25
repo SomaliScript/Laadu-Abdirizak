@@ -12,7 +12,7 @@ module.exports = (io) => {
     START_POSITIONS,
     TURNING_POINTS,
     STATE,
-  } = require('./contsants-server');
+  } = require('./constants_server');
 
   // Object to store active games indexed by room IDs
   const games = {};
@@ -278,7 +278,7 @@ module.exports = (io) => {
 
       // If the piece is at home position (500+)
       if (currentPosition >= 500) {
-        // Can only move out of base if dice roll is 6
+        // Can only move out of home if dice roll is 6
         if (diceValue !== 6) {
           return false;
         }
@@ -304,7 +304,7 @@ module.exports = (io) => {
      * @param {Object} gameState - The current game state.
      * @param {string} playerId - The player ID ('P1', 'P3').
      * @param {number} pieceIndex - The index of the piece being moved (0-3).
-     * @returns {Object} - Movement data including path of the piece.
+     * @returns {Object} - Movement data including path of the piece and killed pieces.
      */
     function applyMove(gameState, playerId, pieceIndex) {
       let currentPosition = gameState.currentPositions[playerId][pieceIndex];
@@ -329,15 +329,16 @@ module.exports = (io) => {
       gameState.currentPositions[playerId][pieceIndex] = newPosition;
 
       // Check for kills
-      const killOccurred = checkForKill(gameState, playerId, newPosition);
-      gameState.killOccurred = killOccurred;
+      const killedPieces = checkForKill(gameState, playerId, newPosition);
+      gameState.killOccurred = killedPieces.length > 0;
 
       // Return movement data
       return {
         playerId,
         pieceIndex,
         path,
-        killOccurred,
+        killOccurred: gameState.killOccurred,
+        killedPieces, // Include the details of killed pieces
       };
     }
 
@@ -383,15 +384,15 @@ module.exports = (io) => {
      * @param {Object} gameState - The current game state.
      * @param {string} playerId - The player ID who moved.
      * @param {number} newPosition - The new position of the moved piece.
-     * @returns {boolean} - True if a kill occurred, false otherwise.
+     * @returns {Array} - Array of killed pieces with details.
      */
     function checkForKill(gameState, playerId, newPosition) {
       if (SAFE_POSITIONS.includes(newPosition)) {
         // No kill can occur on safe positions
-        return false;
+        return [];
       }
 
-      let killOccurred = false;
+      let killedPieces = [];
 
       // Check all opponent players
       for (const opponentId in gameState.currentPositions) {
@@ -401,13 +402,13 @@ module.exports = (io) => {
             if (position === newPosition) {
               // Send opponent's piece back to base
               gameState.currentPositions[opponentId][index] = BASE_POSITIONS[opponentId][index];
-              killOccurred = true;
+              killedPieces.push({ opponentId, pieceIndex: index });
             }
           });
         }
       }
 
-      return killOccurred;
+      return killedPieces;
     }
 
     /**

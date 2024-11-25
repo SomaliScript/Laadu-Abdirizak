@@ -104,15 +104,20 @@ export class Ludo {
   onUpdateGameState({ gameState, moveData }) {
     console.log('Received updated game state:', gameState);
 
-    // Store previous positions to calculate movements
-    const previousPositions = JSON.parse(JSON.stringify(this.currentPositions));
-
     // Update local game state
     this.currentPositions = gameState.currentPositions;
     this.turn = gameState.turn;
     this.diceValue = gameState.diceValue;
 
     UI.setTurn(this.getCurrentPlayerId());
+
+    // Update positions of killed pieces immediately
+    if (moveData && moveData.killedPieces && moveData.killedPieces.length > 0) {
+      moveData.killedPieces.forEach(({ opponentId, pieceIndex }) => {
+        const newPos = this.currentPositions[opponentId][pieceIndex];
+        this.setPiecePosition(opponentId, pieceIndex, newPos);
+      });
+    }
 
     if (moveData) {
       const { playerId, pieceIndex, path } = moveData;
@@ -285,8 +290,9 @@ export class Ludo {
       }
 
       if (HOME_ENTRANCE[player].includes(currentPosition)) {
-        const distanceToHome = HOME_POSITIONS[player] - currentPosition;
-        if (diceValue > distanceToHome) {
+        const index = HOME_ENTRANCE[player].indexOf(currentPosition);
+        const stepsToHome = HOME_ENTRANCE[player].length - index;
+        if (diceValue > stepsToHome) {
           // Dice value is too high to reach home
           return;
         }
