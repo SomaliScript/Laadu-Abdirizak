@@ -175,24 +175,34 @@ module.exports = (io) => {
      * @param {Object} gameState - The current game state.
      * @returns {boolean} - True if the position is locked, false otherwise.
      */
-    function isPositionLocked(position, playerId, gameState) {
-      // Base positions and home positions cannot be locked
-      const isBasePosition = Object.values(BASE_POSITIONS).flat().includes(position);
-      const isHomePosition = Object.values(HOME_POSITIONS).includes(position);
-      if (isBasePosition || isHomePosition) {
-        return false;
-      }
+  function isPositionLocked(position, playerId, gameState) {
+    // Define start positions (e.g., 0, 13, 26, 39)
+    const START_POSITIONS_VALUES = Object.values(START_POSITIONS); // [0, 13, 26, 39]
 
-      const playerPositions = gameState.currentPositions[playerId];
-      let count = 0;
-      playerPositions.forEach(pos => {
-        if (pos === position) {
-          count++;
-        }
-      });
-
-      return count >= 2;
+    // Home positions cannot be locked
+    const isHomePosition = Object.values(HOME_POSITIONS).includes(position);
+    if (isHomePosition) {
+      return false;
     }
+
+    // Base positions (above 500) cannot be locked
+    const isBasePosition = Object.values(BASE_POSITIONS).flat().includes(position);
+    if (isBasePosition) {
+      return false;
+    }
+
+    // Start positions can be locked; no exclusion needed
+
+    const playerPositions = gameState.currentPositions[playerId];
+    let count = 0;
+    playerPositions.forEach(pos => {
+      if (pos === position) {
+        count++;
+      }
+    });
+
+    return count >= 2;
+  }
 
     /**
      * Determines if the player has any available moves that do not involve moving to a locked position.

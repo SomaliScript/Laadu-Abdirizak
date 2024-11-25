@@ -274,7 +274,11 @@ export class Ludo {
       if (BASE_POSITIONS[player].includes(currentPosition)) {
         // Piece is in base (home position)
         if (diceValue === 6) {
-          eligiblePieces.push(pieceIndex);
+          const targetPosition = START_POSITIONS[player];
+          // Check if start position is locked
+          if (!this.isPositionLocked(targetPosition, player)) {
+            eligiblePieces.push(pieceIndex);
+          }
         }
         return;
       }
@@ -288,11 +292,55 @@ export class Ludo {
         }
       }
 
-      // All other pieces are eligible
-      eligiblePieces.push(pieceIndex);
+      // Calculate target position after move
+      let newPosition = currentPosition;
+      for (let i = 0; i < diceValue; i++) {
+        newPosition = this.getNextPosition(player, newPosition);
+      }
+
+      // Check if new position is beyond home
+      if (this.isBeyondHome(player, newPosition)) {
+        return;
+      }
+
+      // Check if new position is locked
+      if (!this.isPositionLocked(newPosition, player)) {
+        eligiblePieces.push(pieceIndex);
+      }
     });
 
     return eligiblePieces;
+  }
+  
+  
+  /**
+   * Determines if a given position is locked by two or more opponent's pieces.
+   * @param {number} position - The position to check.
+   * @param {string} playerId - The ID of the current player ('P1', 'P3').
+   * @returns {boolean} - True if the position is locked, false otherwise.
+   */
+  isPositionLocked(position, playerId) {
+    // Exclude home positions and base positions
+    const isHomePosition = Object.values(HOME_POSITIONS).includes(position);
+    const isBasePosition = Object.values(BASE_POSITIONS).flat().includes(position);
+    if (isHomePosition || isBasePosition) {
+      return false;
+    }
+
+    // Count opponent pieces on the target position
+    let count = 0;
+    PLAYERS.forEach((opponentId) => {
+      if (opponentId !== playerId) {
+        const opponentPieces = this.currentPositions[opponentId];
+        opponentPieces.forEach((opponentPos) => {
+          if (opponentPos === position) {
+            count++;
+          }
+        });
+      }
+    });
+
+    return count >= 2;
   }
 
   /**
