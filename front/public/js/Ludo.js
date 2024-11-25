@@ -39,11 +39,13 @@ export class Ludo {
     this.socket.on('playerAssigned', this.onPlayerAssigned.bind(this));
     this.socket.on('startGame', this.onStartGame.bind(this));
     this.socket.on('diceRolled', this.onDiceRolled.bind(this));
-    this.socket.on('playerMissedTurn', this.onPlayerMissedTurn.bind(this)); // New Listener
     this.socket.on('updateGameState', this.onUpdateGameState.bind(this));
     this.socket.on('gameOver', this.onGameOver.bind(this));
     this.socket.on('opponentLeft', this.onOpponentLeft.bind(this));
     this.socket.on('errorMessage', this.onErrorMessage.bind(this));
+
+    // Add handler for 'turnSkipped'
+    this.socket.on('turnSkipped', this.onTurnSkipped.bind(this));
   }
 
   /**
@@ -82,7 +84,7 @@ export class Ludo {
   /**
    * Handler for when the dice is rolled.
    */
-  onDiceRolled({ playerId, diceValue, movablePieces }) {
+  onDiceRolled({ playerId, diceValue }) {
     this.diceValue = diceValue;
     UI.setDiceValue(diceValue);
     UI.unhighlightPieces();
@@ -90,15 +92,9 @@ export class Ludo {
     console.log(`Dice rolled by ${playerId}, value: ${diceValue}`);
 
     if (playerId === this.playerId) {
-      if (movablePieces.length > 0) {
-        this.state = STATE.DICE_ROLLED;
-        console.log('It is my turn. Highlighting eligible pieces.');
-        this.highlightEligiblePieces(movablePieces);
-      } else {
-        // No movable pieces; this should not happen as server handles turn skipping
-        this.state = STATE.DICE_NOT_ROLLED;
-        UI.disableDice();
-      }
+      this.state = STATE.DICE_ROLLED;
+      console.log('It is my turn. Checking for eligible pieces.');
+      this.checkForEligiblePieces();
     } else {
       this.state = STATE.WAITING_FOR_OPPONENT;
       console.log('Waiting for opponent to move.');
@@ -106,29 +102,9 @@ export class Ludo {
   }
 
   /**
-   * Handler for when the player misses their turn due to locked positions.
-   */
-  onPlayerMissedTurn({ playerId, diceValue, reason }) {
-    if (playerId === this.playerId) {
-      alert(`You missed your turn: ${reason}`);
-      this.state = STATE.DICE_NOT_ROLLED;
-      UI.disableDice();
-    } else {
-      alert(`Opponent missed their turn: ${reason}`);
-      // Optionally, update UI to indicate it's now the player's turn
-      this.state = STATE.WAITING_FOR_OPPONENT;
-      UI.setTurn(this.getCurrentPlayerId());
-    }
-
-    // **Removed manual turn incrementation**
-    // this.turn = (this.turn + 1) % this.players.length;
-    // UI.setTurn(this.getCurrentPlayerId());
-  }
-
-  /**
    * Handler for when the game state is updated by the server.
    */
-  onUpdateGameState({ gameState, moveData }) {
+  onUpdateGameState({ gameState, moveData, message }) {
     console.log('Received updated game state:', gameState);
 
     // Update local game state
@@ -156,6 +132,11 @@ export class Ludo {
       UI.updateBoard(this.currentPositions);
     }
 
+    // Display any messages from the server
+    if (message) {
+      alert(message); // You can replace this with a more sophisticated UI notification
+    }
+
     // Handle state changes
     if (this.getCurrentPlayerId() === this.playerId) {
       if (this.state !== STATE.DICE_ROLLED) {
@@ -169,34 +150,29 @@ export class Ludo {
   }
 
   /**
-   * Animates the movement of a piece along a given path.
+   * Handler for when a player's turn is skipped.
    */
-  animateMove(playerId, pieceIndex, path) {
-    if (path.length === 0) {
-      return;
+  onTurnSkipped({ playerId, diceValue, reason }) {
+    console.log(`Player ${playerId} skipped their turn. Reason: ${reason}`);
+
+    if (playerId === this.playerId) {
+      alert(`You missed your turn: ${reason}`);
+    } else {
+      alert(`Player ${playerId} missed their turn: ${reason}`);
     }
 
-    let moveBy = path.length;
-    const interval = setInterval(() => {
-      const nextPosition = path.shift();
-      if (nextPosition !== undefined) {
-        this.setPiecePosition(playerId, pieceIndex, nextPosition);
-      }
-      moveBy--;
+    // Ensure pieces are not highlighted
+    UI.unhighlightPieces();
 
-      if (moveBy === 0 || path.length === 0) {
-        clearInterval(interval);
-        // After moving, check for any additional actions if needed
-      }
-    }, 300); // Adjust the interval time as needed
-  }
+    // Update the turn display
+    UI.setTurn(this.getCurrentPlayerId());
 
-  /**
-   * Sets the piece's position locally.
-   */
-  setPiecePosition(player, piece, newPosition) {
-    this.currentPositions[player][piece] = newPosition;
-    UI.setPiecePosition(player, piece, newPosition);
+    // Manage the dice button based on turn
+    if (this.getCurrentPlayerId() === this.playerId) {
+      UI.enableDice();
+    } else {
+      UI.disableDice();
+    }
   }
 
   /**
@@ -295,14 +271,6 @@ export class Ludo {
   }
 
   /**
-   * Highlights eligible pieces based on the server's response.
-   * @param {Array<number>} movablePieces - Array of piece indices that can be moved.
-   */
-  highlightEligiblePieces(movablePieces) {
-    UI.highlightPieces(this.playerId, movablePieces);
-  }
-
-  /**
    * Determines which pieces are eligible to move.
    */
   getEligiblePieces(player) {
@@ -360,5 +328,36 @@ export class Ludo {
    */
   getPlayerIdByIndex(index) {
     return this.players[index];
+  }
+
+  /**
+   * Animates the movement of a piece along a given path.
+   */
+  animateMove(playerId, pieceIndex, path) {
+    if (path.length === 0) {
+      return;
+    }
+
+    let moveBy = path.length;
+    const interval = setInterval(() => {
+      const nextPosition = path.shift();
+      if (nextPosition !== undefined) {
+        this.setPiecePosition(playerId, pieceIndex, nextPosition);
+      }
+      moveBy--;
+
+      if (moveBy === 0 || path.length === 0) {
+        clearInterval(interval);
+        // After moving, check for any additional actions if needed
+      }
+    }, 300); // Adjust the interval time as needed
+  }
+
+  /**
+   * Sets the piece's position locally.
+   */
+  setPiecePosition(player, piece, newPosition) {
+    this.currentPositions[player][piece] = newPosition;
+    UI.setPiecePosition(player, piece, newPosition);
   }
 }
