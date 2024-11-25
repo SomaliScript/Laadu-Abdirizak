@@ -311,37 +311,6 @@ export class Ludo {
 
     return eligiblePieces;
   }
-  
-  
-  /**
-   * Determines if a given position is locked by two or more opponent's pieces.
-   * @param {number} position - The position to check.
-   * @param {string} playerId - The ID of the current player ('P1', 'P3').
-   * @returns {boolean} - True if the position is locked, false otherwise.
-   */
-  isPositionLocked(position, playerId) {
-    // Exclude home positions and base positions
-    const isHomePosition = Object.values(HOME_POSITIONS).includes(position);
-    const isBasePosition = Object.values(BASE_POSITIONS).flat().includes(position);
-    if (isHomePosition || isBasePosition) {
-      return false;
-    }
-
-    // Count opponent pieces on the target position
-    let count = 0;
-    PLAYERS.forEach((opponentId) => {
-      if (opponentId !== playerId) {
-        const opponentPieces = this.currentPositions[opponentId];
-        opponentPieces.forEach((opponentPos) => {
-          if (opponentPos === position) {
-            count++;
-          }
-        });
-      }
-    });
-
-    return count >= 2;
-  }
 
   /**
    * Handler for when the reset button is clicked.
@@ -394,5 +363,59 @@ export class Ludo {
   setPiecePosition(player, piece, newPosition) {
     this.currentPositions[player][piece] = newPosition;
     UI.setPiecePosition(player, piece, newPosition);
+  }
+
+  /**
+   * Determines if a given position is locked by two or more opponent's pieces.
+   * @param {number} position - The position to check.
+   * @param {string} playerId - The ID of the current player ('P1', 'P3').
+   * @returns {boolean} - True if the position is locked, false otherwise.
+   */
+  isPositionLocked(position, playerId) {
+    // Exclude home positions and base positions
+    const isHomePosition = Object.values(HOME_POSITIONS).includes(position);
+    const isBasePosition = Object.values(BASE_POSITIONS).flat().includes(position);
+    if (isHomePosition || isBasePosition) {
+      return false;
+    }
+
+    // Count opponent pieces on the target position
+    let count = 0;
+    PLAYERS.forEach((opponentId) => {
+      if (opponentId !== playerId) {
+        const opponentPieces = this.currentPositions[opponentId];
+        opponentPieces.forEach((opponentPos) => {
+          if (opponentPos === position) {
+            count++;
+          }
+        });
+      }
+    });
+
+    return count >= 2;
+  }
+
+  /**
+   * Calculates the next position for a piece based on the current position and player ID.
+   * This mirrors the server-side logic for consistency.
+   * @param {string} playerId - The ID of the player ('P1', 'P3').
+   * @param {number} currentPosition - The current position of the piece.
+   * @returns {number} - The next position of the piece.
+   */
+  getNextPosition(playerId, currentPosition) {
+    if (currentPosition === TURNING_POINTS[playerId]) {
+      return HOME_ENTRANCE[playerId][0];
+    } else if (HOME_ENTRANCE[playerId].includes(currentPosition)) {
+      const index = HOME_ENTRANCE[playerId].indexOf(currentPosition);
+      if (index + 1 < HOME_ENTRANCE[playerId].length) {
+        return HOME_ENTRANCE[playerId][index + 1];
+      } else {
+        return HOME_POSITIONS[playerId]; // Reached home
+      }
+    } else if (currentPosition === 51) {
+      return 0;
+    } else {
+      return currentPosition + 1;
+    }
   }
 }
