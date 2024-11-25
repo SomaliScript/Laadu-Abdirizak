@@ -1,363 +1,405 @@
-// Ludo.js
+// io.js
 
-import { UI } from './UI.js';
-import {
-  STATE,
-  PLAYERS,
-  BASE_POSITIONS,
-  HOME_ENTRANCE,
-  HOME_POSITIONS,
-  SAFE_POSITIONS,
-  START_POSITIONS,
-  TURNING_POINTS,
-} from './constants.js';
+module.exports = (io) => {
+  // Import constants from constants_server.js
+  const {
+    COORDINATES_MAP,
+    BASE_POSITIONS,
+    HOME_ENTRANCE,
+    HOME_POSITIONS,
+    PLAYERS,
+    SAFE_POSITIONS,
+    START_POSITIONS,
+    TURNING_POINTS,
+    STATE,
+  } = require('./constants_server');
 
-export class Ludo {
-  constructor() {
-    // Initialize properties
-    this.socket = io(); // Ensure 'io' is available globally or adjust as necessary
-    this.playerId = null;
-    this.room = null;
-    this.currentPositions = {};
-    this.turn = null;
-    this.diceValue = null;
-    this.state = null;
-    this.players = [];
+  // Object to store active games indexed by room IDs
+  const games = {};
 
-    // Set up event listeners
-    this.setupSocketListeners();
-    this.setupUIListeners();
+  io.on('connection', (socket) => {
+    console.log(`New socket connection: ${socket.id}`);
 
-    // Join the game
-    this.socket.emit('joinGame');
-  }
+    // Handle 'joinGame' event from clients
+    socket.on('joinGame', () => {
+      // Find or create a room for the player
+      let room = findAvailableRoom();
 
-  /**
-   * Set up event listeners for socket events from the server.
-   */
-  setupSocketListeners() {
-    this.socket.on('playerAssigned', this.onPlayerAssigned.bind(this));
-    this.socket.on('startGame', this.onStartGame.bind(this));
-    this.socket.on('diceRolled', this.onDiceRolled.bind(this));
-    this.socket.on('updateGameState', this.onUpdateGameState.bind(this));
-    this.socket.on('gameOver', this.onGameOver.bind(this));
-    this.socket.on('opponentLeft', this.onOpponentLeft.bind(this));
-    this.socket.on('errorMessage', this.onErrorMessage.bind(this));
+      if (!room) {
+        // Create a new room if no available rooms
+        room = `room-${socket.id}`;
+        games[room] = {
+          players: [],
+          gameState: null,
+        };
+        console.log(`Created new room: ${room}`);
+      }
 
-    // Add handler for 'turnSkipped'
-    this.socket.on('turnSkipped', this.onTurnSkipped.bind(this));
-  }
+      // Join the room
+      socket.join(room);
+      const playerId = assignPlayerId(room, socket.id);
+      console.log(`Player ${playerId} (${socket.id}) joined ${room}`);
 
-  /**
-   * Set up UI event listeners for user interactions.
-   */
-  setupUIListeners() {
-    UI.listenDiceClick(this.onDiceClick.bind(this));
-    UI.listenPieceClick(this.onPieceClick.bind(this));
-    UI.listenResetClick(this.onResetClick.bind(this));
-  }
+      // Send the assigned player ID and room info to the client
+      socket.emit('playerAssigned', { playerId, room });
 
-  /**
-   * Handler for when the server assigns a player ID and room.
-   */
-  onPlayerAssigned({ playerId, room }) {
-    this.playerId = playerId;
-    this.room = room;
-    console.log(`Assigned ${playerId} in ${room}`);
-  }
+      // Start the game when two players have joined
+      if (games[room].players.length === 2) {
+        // Initialize game state
+        games[room].gameState = initializeGameState(games[room].players);
+        // Notify players that the game is starting
+        io.in(room).emit('startGame', {
+          gameState: games[room].gameState,
+          players: games[room].players.map((p) => p.playerId),
+        });
+        console.log(`Game started in ${room}`);
+      }
 
-  /**
-   * Handler for when the game starts.
-   */
-  onStartGame({ gameState, players }) {
-    this.players = players; // Store the players array
-    this.currentPositions = gameState.currentPositions;
-    this.turn = gameState.turn;
-    this.diceValue = gameState.diceValue;
-    this.state = STATE.DICE_NOT_ROLLED;
-    UI.updateBoard(this.currentPositions);
-    UI.setTurn(this.getCurrentPlayerId());
-    UI.setDiceValue('-');
-    console.log('Game started');
-  }
+      // Handle player disconnection
+      socket.on('disconnect', () => {
+        console.log(`Player ${socket.id} disconnected`);
+        handleDisconnect(room, socket.id);
+      });
 
-  /**
-   * Handler for when the dice is rolled.
-   */
-  onDiceRolled({ playerId, diceValue }) {
-    this.diceValue = diceValue;
-    UI.setDiceValue(diceValue);
-    UI.unhighlightPieces();
+      // Handle game actions
+      socket.on('rollDice', () => {
+        handleDiceRoll(room, socket.id);
+      });
 
-    console.log(`Dice rolled by ${playerId}, value: ${diceValue}`);
+      socket.on('makeMove', (data) => {
+        handleMakeMove(room, socket.id, data);
+      });
 
-    if (playerId === this.playerId) {
-      this.state = STATE.DICE_ROLLED;
-      console.log('It is my turn. Checking for eligible pieces.');
-      this.checkForEligiblePieces();
-    } else {
-      this.state = STATE.WAITING_FOR_OPPONENT;
-      console.log('Waiting for opponent to move.');
+      socket.on('noMoves', () => {
+        handleNoMoves(room, socket.id);
+      });
+
+      // Optional: Handle 'playerMissedTurn' if needed
+      socket.on('playerMissedTurn', ({ diceValue }) => {
+        console.log(`Player ${socket.id} missed their turn due to locked positions with dice value ${diceValue}.`);
+        // Additional logic can be added here if needed
+      });
+    });
+
+    /**
+     * Finds an available room with less than 2 players.
+     * @returns {string|null} - The room ID or null if no room is available.
+     */
+    function findAvailableRoom() {
+      for (const room in games) {
+        if (games[room].players.length < 2) {
+          return room;
+        }
+      }
+      return null;
     }
-  }
 
-  /**
-   * Handler for when the game state is updated by the server.
-   */
-  onUpdateGameState({ gameState, moveData, message }) {
-    console.log('Received updated game state:', gameState);
+    /**
+     * Assigns a player ID to a socket in a room.
+     * @param {string} room - The room ID.
+     * @param {string} socketId - The socket ID.
+     * @returns {string} - The assigned player ID (e.g., 'P1', 'P3').
+     */
+    function assignPlayerId(room, socketId) {
+      const existingPlayerIds = games[room].players.map((player) => player.playerId);
 
-    // Update local game state
-    this.currentPositions = gameState.currentPositions;
-    this.turn = gameState.turn;
-    this.diceValue = gameState.diceValue;
+      // Define the possible player IDs
+      const possiblePlayerIds = ['P1', 'P3'];
 
-    UI.setTurn(this.getCurrentPlayerId());
+      // Find the first available player ID
+      const playerId = possiblePlayerIds.find((id) => !existingPlayerIds.includes(id));
 
-    // Update positions of killed pieces immediately
-    if (moveData && moveData.killedPieces && moveData.killedPieces.length > 0) {
-      moveData.killedPieces.forEach(({ opponentId, pieceIndex }) => {
-        const newPos = this.currentPositions[opponentId][pieceIndex];
-        this.setPiecePosition(opponentId, pieceIndex, newPos);
+      if (!playerId) {
+        // Room is full
+        socket.emit('errorMessage', 'Room is full.');
+        return null;
+      }
+
+      games[room].players.push({ socketId, playerId });
+      return playerId;
+    }
+
+    /**
+     * Initializes the game state for a room.
+     * @param {Array} players - The array of player objects in the room.
+     * @returns {Object} - The initial game state.
+     */
+    function initializeGameState(players) {
+      const currentPositions = {};
+
+      players.forEach((player) => {
+        const playerId = player.playerId;
+
+        if (BASE_POSITIONS[playerId]) {
+          currentPositions[playerId] = [...BASE_POSITIONS[playerId]]; // Copy base positions
+        } else {
+          console.error(`Unknown player ID: ${playerId}`);
+        }
+      });
+
+      return {
+        currentPositions,
+        turn: 0, // Index of the current player in the players array
+        diceValue: null,
+        killOccurred: false,
+      };
+    }
+
+    /**
+     * Handles a player's disconnection from a room.
+     * @param {string} room - The room ID.
+     * @param {string} socketId - The socket ID of the disconnected player.
+     */
+    function handleDisconnect(room, socketId) {
+      if (games[room]) {
+        // Remove the player from the room
+        games[room].players = games[room].players.filter(
+          (player) => player.socketId !== socketId
+        );
+
+        // Notify remaining player
+        if (games[room].players.length > 0) {
+          io.in(room).emit('opponentLeft', 'Your opponent has left the game.');
+        } else {
+          // Delete the game if no players are left
+          delete games[room];
+          console.log(`Room ${room} deleted`);
+        }
+      }
+    }
+
+    /**
+     * Checks if a given position is locked by two or more of the same player's pieces.
+     * @param {number} position - The board position to check.
+     * @param {string} playerId - The ID of the player ('P1', 'P3').
+     * @param {Object} gameState - The current game state.
+     * @returns {boolean} - True if the position is locked, false otherwise.
+     */
+    function isPositionLocked(position, playerId, gameState) {
+      // Base positions and home positions cannot be locked
+      const isBasePosition = Object.values(BASE_POSITIONS).flat().includes(position);
+      const isHomePosition = Object.values(HOME_POSITIONS).includes(position);
+      if (isBasePosition || isHomePosition) {
+        return false;
+      }
+
+      const playerPositions = gameState.currentPositions[playerId];
+      let count = 0;
+      playerPositions.forEach(pos => {
+        if (pos === position) {
+          count++;
+        }
+      });
+
+      return count >= 2;
+    }
+
+    /**
+     * Determines if the player has any available moves that do not involve moving to a locked position.
+     * @param {string} playerId - The ID of the player ('P1', 'P3').
+     * @param {number} diceValue - The value rolled on the dice.
+     * @param {Object} gameState - The current game state.
+     * @returns {boolean} - True if there are available moves, false otherwise.
+     */
+    function hasAvailableMoves(playerId, diceValue, gameState) {
+      const playerPieces = gameState.currentPositions[playerId];
+      
+      for (let pieceIndex = 0; pieceIndex < playerPieces.length; pieceIndex++) {
+        const currentPosition = playerPieces[pieceIndex];
+        
+        if (currentPosition >= 500) {
+          if (diceValue === 6) {
+            // Can move out of base
+            const targetPosition = START_POSITIONS[playerId];
+            if (!isPositionLocked(targetPosition, playerId, gameState)) {
+              return true;
+            }
+          }
+          continue;
+        }
+        
+        // Simulate moving the piece
+        let newPosition = currentPosition;
+        for (let i = 0; i < diceValue; i++) {
+          newPosition = getNextPosition(playerId, newPosition);
+        }
+        
+        // Check if new position is beyond home
+        if (isBeyondHome(playerId, newPosition)) {
+          continue;
+        }
+        
+        // Check if new position is locked
+        if (!isPositionLocked(newPosition, playerId, gameState)) {
+          return true;
+        }
+      }
+      
+      return false;
+    }
+
+    /**
+     * Handles a player's request to roll the dice.
+     * @param {string} room - The room ID.
+     * @param {string} socketId - The socket ID of the player rolling the dice.
+     */
+    function handleDiceRoll(room, socketId) {
+      const game = games[room];
+      if (!game) return;
+
+      const currentPlayer = game.players[game.gameState.turn];
+      if (currentPlayer.socketId !== socketId) {
+        io.to(socketId).emit('errorMessage', 'It is not your turn to roll the dice.');
+        return;
+      }
+
+      // Roll the dice
+      const diceValue = Math.floor(Math.random() * 6) + 1;
+      game.gameState.diceValue = diceValue;
+
+      console.log(`Player ${currentPlayer.playerId} rolled a ${diceValue}`);
+
+      // Check if the player has any available moves considering locked positions
+      const hasMoves = hasAvailableMoves(currentPlayer.playerId, diceValue, game.gameState);
+
+      if (!hasMoves) {
+        console.log(`Player ${currentPlayer.playerId} has no available moves and misses their turn.`);
+        // Notify the player that they have missed their turn
+        io.to(socketId).emit('playerMissedTurn', { diceValue });
+
+        // Switch turn to the next player
+        game.gameState.turn = (game.gameState.turn + 1) % game.players.length;
+        game.gameState.diceValue = null;
+        game.gameState.killOccurred = false;
+
+        // Notify all players about the updated game state
+        io.in(room).emit('updateGameState', { gameState: game.gameState });
+
+        return;
+      }
+
+      // Notify both players about the dice roll
+      io.in(room).emit('diceRolled', {
+        playerId: currentPlayer.playerId,
+        diceValue,
       });
     }
 
-    if (moveData) {
-      const { playerId, pieceIndex, path } = moveData;
+    /**
+     * Handles a player's move action.
+     * @param {string} room - The room ID.
+     * @param {string} socketId - The socket ID of the player making the move.
+     * @param {Object} data - The move data from the client.
+     */
+    function handleMakeMove(room, socketId, data) {
+      const game = games[room];
+      if (!game) return;
 
-      // Animate the move
-      this.animateMove(playerId, pieceIndex, path);
-    } else {
-      // If no move data, just update the board
-      UI.updateBoard(this.currentPositions);
-    }
-
-    // Display any messages from the server
-    if (message) {
-      alert(message); // You can replace this with a more sophisticated UI notification
-    }
-
-    // Handle state changes
-    if (this.getCurrentPlayerId() === this.playerId) {
-      if (this.state !== STATE.DICE_ROLLED) {
-        this.state = STATE.DICE_NOT_ROLLED;
-        UI.enableDice();
-      }
-    } else {
-      this.state = STATE.WAITING_FOR_OPPONENT;
-      UI.disableDice();
-    }
-  }
-
-  /**
-   * Handler for when a player's turn is skipped.
-   */
-  onTurnSkipped({ playerId, diceValue, reason }) {
-    console.log(`Player ${playerId} skipped their turn. Reason: ${reason}`);
-
-    if (playerId === this.playerId) {
-      alert(`You missed your turn: ${reason}`);
-    } else {
-      alert(`Player ${playerId} missed their turn: ${reason}`);
-    }
-
-    // Ensure pieces are not highlighted
-    UI.unhighlightPieces();
-
-    // Update the turn display
-    UI.setTurn(this.getCurrentPlayerId());
-
-    // Manage the dice button based on turn
-    if (this.getCurrentPlayerId() === this.playerId) {
-      UI.enableDice();
-    } else {
-      UI.disableDice();
-    }
-  }
-
-  /**
-   * Handler for when the game is over.
-   */
-  onGameOver({ winner }) {
-    if (winner === this.playerId) {
-      alert('Congratulations! You won!');
-    } else {
-      alert('You lost. Better luck next time!');
-    }
-    // Optionally reset the game or redirect to a lobby
-  }
-
-  /**
-   * Handler for when the opponent leaves the game.
-   */
-  onOpponentLeft(message) {
-    alert(message);
-    // Optionally reset the game or wait for a new player
-  }
-
-  /**
-   * Handler for error messages from the server.
-   */
-  onErrorMessage(message) {
-    alert(message);
-  }
-
-  /**
-   * Handler for when the dice is clicked.
-   */
-  onDiceClick() {
-    if (this.state !== STATE.DICE_NOT_ROLLED || this.playerId !== this.getCurrentPlayerId()) {
-      alert('It is not your turn to roll the dice.');
-      return;
-    }
-    console.log('Rolling the dice.');
-    // Emit the rollDice event to the server
-    this.socket.emit('rollDice');
-    UI.disableDice();
-  }
-
-  /**
-   * Handler for when a piece is clicked.
-   */
-  onPieceClick(event) {
-    const target = event.target;
-
-    if (!target.classList.contains('player-piece') || !target.classList.contains('highlight')) {
-      return;
-    }
-    console.log('Piece clicked');
-
-    const player = target.getAttribute('player-id');
-    const piece = parseInt(target.getAttribute('piece'));
-
-    if (player !== this.playerId) {
-      alert('You can only move your own pieces.');
-      return;
-    }
-
-    if (this.state !== STATE.DICE_ROLLED || this.playerId !== this.getCurrentPlayerId()) {
-      alert('It is not your turn to move.');
-      return;
-    }
-
-    // Handle the piece click logic
-    this.handlePieceClick(player, piece);
-    UI.unhighlightPieces();
-  }
-
-  /**
-   * Handles the logic when a piece is clicked.
-   */
-  handlePieceClick(player, piece) {
-    console.log(`Handling piece click for player ${player}, piece ${piece}`);
-    // We don't move the piece here; we wait for the server to confirm and send the move data
-
-    // Send the move to the server
-    this.socket.emit('makeMove', { pieceIndex: piece });
-    this.state = STATE.DICE_NOT_ROLLED;
-  }
-
-  /**
-   * Checks for eligible pieces to move after a dice roll.
-   */
-  checkForEligiblePieces() {
-    const eligiblePieces = this.getEligiblePieces(this.playerId);
-    if (eligiblePieces.length > 0) {
-      UI.highlightPieces(this.playerId, eligiblePieces);
-    } else {
-      // No eligible pieces, notify the server to end the turn
-      this.socket.emit('noMoves');
-    }
-  }
-
-  /**
-   * Determines which pieces are eligible to move.
-   */
-  getEligiblePieces(player) {
-    const pieces = this.currentPositions[player];
-    const diceValue = this.diceValue;
-    const eligiblePieces = [];
-
-    pieces.forEach((currentPosition, pieceIndex) => {
-      if (currentPosition === HOME_POSITIONS[player]) {
-        // Piece already at home
+      const currentPlayer = game.players[game.gameState.turn];
+      if (currentPlayer.socketId !== socketId) {
+        io.to(socketId).emit('errorMessage', 'It is not your turn to move.');
         return;
       }
 
-      if (BASE_POSITIONS[player].includes(currentPosition)) {
-        // Piece is in base (home position)
-        if (diceValue === 6) {
-          eligiblePieces.push(pieceIndex);
-        }
+      const { pieceIndex } = data;
+      const playerId = currentPlayer.playerId;
+
+      // Validate move
+      const isValid = validateMove(game.gameState, playerId, pieceIndex);
+      if (!isValid) {
+        io.to(socketId).emit('errorMessage', 'Invalid move.');
         return;
       }
 
-      if (HOME_ENTRANCE[player].includes(currentPosition)) {
-        const index = HOME_ENTRANCE[player].indexOf(currentPosition);
-        const stepsToHome = HOME_ENTRANCE[player].length - index;
-        if (diceValue > stepsToHome) {
-          // Dice value is too high to reach home
-          return;
-        }
+      // Apply move and get movement data
+      const moveData = applyMove(game.gameState, playerId, pieceIndex);
+
+      // Check for a win condition
+      if (hasPlayerWon(game.gameState, playerId)) {
+        io.in(room).emit('gameOver', { winner: playerId });
+        delete games[room]; // End the game
+        return;
       }
 
-      // All other pieces are eligible
-      eligiblePieces.push(pieceIndex);
-    });
+      // Check if the player gets another turn
+      const extraTurn = game.gameState.diceValue === 6 || game.gameState.killOccurred;
+      if (!extraTurn) {
+        // Switch turn
+        game.gameState.turn = (game.gameState.turn + 1) % game.players.length;
+      }
+      game.gameState.diceValue = null; // Reset dice value
+      game.gameState.killOccurred = false; // Reset kill flag
 
-    return eligiblePieces;
-  }
-
-  /**
-   * Handler for when the reset button is clicked.
-   */
-  onResetClick() {
-    // Optionally implement a reset functionality
-    alert('Reset is not implemented in multiplayer mode.');
-  }
-
-  /**
-   * Gets the current player's ID based on the turn.
-   */
-  getCurrentPlayerId() {
-    return this.getPlayerIdByIndex(this.turn);
-  }
-
-  /**
-   * Gets the player ID by index.
-   */
-  getPlayerIdByIndex(index) {
-    return this.players[index];
-  }
-
-  /**
-   * Animates the movement of a piece along a given path.
-   */
-  animateMove(playerId, pieceIndex, path) {
-    if (path.length === 0) {
-      return;
+      // Send updated game state to clients, including movement data
+      io.in(room).emit('updateGameState', {
+        gameState: game.gameState,
+        moveData: moveData,
+      });
     }
 
-    let moveBy = path.length;
-    const interval = setInterval(() => {
-      const nextPosition = path.shift();
-      if (nextPosition !== undefined) {
-        this.setPiecePosition(playerId, pieceIndex, nextPosition);
-      }
-      moveBy--;
+    /**
+     * Handles when a player has no moves.
+     * @param {string} room - The room ID.
+     * @param {string} socketId - The socket ID of the player.
+     */
+    function handleNoMoves(room, socketId) {
+      const game = games[room];
+      if (!game) return;
 
-      if (moveBy === 0 || path.length === 0) {
-        clearInterval(interval);
-        // After moving, check for any additional actions if needed
+      const currentPlayer = game.players[game.gameState.turn];
+      if (currentPlayer.socketId !== socketId) {
+        io.to(socketId).emit('errorMessage', 'It is not your turn.');
+        return;
       }
-    }, 300); // Adjust the interval time as needed
-  }
 
-  /**
-   * Sets the piece's position locally.
-   */
-  setPiecePosition(player, piece, newPosition) {
-    this.currentPositions[player][piece] = newPosition;
-    UI.setPiecePosition(player, piece, newPosition);
-  }
-}
+      // Switch turn
+      game.gameState.turn = (game.gameState.turn + 1) % game.players.length;
+      game.gameState.diceValue = null;
+
+      // Send updated game state to clients
+      io.in(room).emit('updateGameState', { gameState: game.gameState });
+    }
+
+    /**
+     * Validates a player's move based on the game state and rules.
+     * @param {Object} gameState - The current game state.
+     * @param {string} playerId - The player ID ('P1', 'P3').
+     * @param {number} pieceIndex - The index of the piece being moved (0-3).
+     * @returns {boolean} - True if the move is valid, false otherwise.
+     */
+    function validateMove(gameState, playerId, pieceIndex) {
+      const currentPosition = gameState.currentPositions[playerId][pieceIndex];
+      const diceValue = gameState.diceValue;
+
+      // If the piece is at home position (500+)
+      if (currentPosition >= 500) {
+        // Can only move out of home if dice roll is 6
+        if (diceValue !== 6) {
+          return false;
+        }
+        return true;
+      }
+
+      // Simulate moving the piece
+      let newPosition = currentPosition;
+      for (let i = 0; i < diceValue; i++) {
+        newPosition = getNextPosition(playerId, newPosition);
+      }
+
+      // Check if the new position is beyond the home position
+      if (isBeyondHome(playerId, newPosition)) {
+        return false;
+      }
+
+      // Check if the new position is locked
+      if (isPositionLocked(newPosition, playerId, gameState)) {
+        return false;
+      }
+
+      return true;
+    }
+
+    // ... (rest of your existing functions)
+
+  });
+};
