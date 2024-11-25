@@ -109,6 +109,8 @@ export class Ludo {
    * Handler for when the player misses their turn due to locked positions.
    */
   onPlayerMissedTurn({ playerId, diceValue, reason }) {
+    console.log(`onPlayerMissedTurn: Player ${playerId} missed their turn due to ${reason}`);
+
     if (playerId === this.playerId) {
       alert(`You missed your turn: ${reason}`);
       this.state = STATE.DICE_NOT_ROLLED;
@@ -120,9 +122,8 @@ export class Ludo {
       UI.setTurn(this.getCurrentPlayerId());
     }
 
-    // Update turn in UI
-    this.turn = (this.turn + 1) % this.players.length;
-    UI.setTurn(this.getCurrentPlayerId());
+    // Removed the manual turn increment to prevent desynchronization
+    // this.turn = (this.turn + 1) % this.players.length; // REMOVE THIS LINE
   }
 
   /**
