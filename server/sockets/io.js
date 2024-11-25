@@ -163,6 +163,74 @@ module.exports = (io) => {
     }
 
     /**
+     * Determines the opponent's player ID.
+     * @param {Array} players - Array of player objects.
+     * @param {string} currentPlayerId - The current player's ID.
+     * @returns {string|null} - The opponent's player ID or null.
+     */
+    function getOpponentId(players, currentPlayerId) {
+      const opponent = players.find((player) => player.playerId !== currentPlayerId);
+      return opponent ? opponent.playerId : null;
+    }
+
+    /**
+     * Checks if a position is locked (occupied by two or more opponent pieces).
+     * @param {Object} gameState - The current game state.
+     * @param {number} position - The position to check.
+     * @param {string} opponentId - The opponent's player ID.
+     * @returns {boolean} - True if the position is locked, false otherwise.
+     */
+    function isPositionLocked(gameState, position, opponentId) {
+      const opponentPieces = gameState.currentPositions[opponentId];
+      let count = 0;
+      opponentPieces.forEach((pos) => {
+        if (pos === position) count++;
+      });
+      return count >= 2;
+    }
+
+    /**
+     * Retrieves all eligible pieces that can move based on the current dice value.
+     * @param {Object} gameState - The current game state.
+     * @param {string} playerId - The player ID.
+     * @param {number} diceValue - The rolled dice value.
+     * @returns {Array<number>} - Array of eligible piece indices.
+     */
+    function getEligiblePieces(gameState, playerId, diceValue) {
+      const pieces = gameState.currentPositions[playerId];
+      const eligiblePieces = [];
+
+      pieces.forEach((currentPosition, pieceIndex) => {
+        if (currentPosition === HOME_POSITIONS[playerId]) {
+          // Piece already at home
+          return;
+        }
+
+        if (BASE_POSITIONS[playerId].includes(currentPosition)) {
+          // Piece is in base
+          if (diceValue === 6) {
+            eligiblePieces.push(pieceIndex);
+          }
+          return;
+        }
+
+        if (HOME_ENTRANCE[playerId].includes(currentPosition)) {
+          const index = HOME_ENTRANCE[playerId].indexOf(currentPosition);
+          const stepsToHome = HOME_ENTRANCE[playerId].length - index;
+          if (diceValue > stepsToHome) {
+            // Dice value is too high to reach home
+            return;
+          }
+        }
+
+        // All other pieces are eligible
+        eligiblePieces.push(pieceIndex);
+      });
+
+      return eligiblePieces;
+    }
+
+    /**
      * Handles a player's request to roll the dice.
      * @param {string} room - The room ID.
      * @param {string} socketId - The socket ID of the player rolling the dice.
@@ -183,11 +251,68 @@ module.exports = (io) => {
 
       console.log(`Player ${currentPlayer.playerId} rolled a ${diceValue}`);
 
-      // Notify both players about the dice roll
-      io.in(room).emit('diceRolled', {
-        playerId: currentPlayer.playerId,
-        diceValue,
+      // Find all eligible pieces based on dice roll
+      const eligiblePieces = getEligiblePieces(game.gameState, currentPlayer.playerId, diceValue);
+
+      if (eligiblePieces.length === 0) {
+        // No eligible pieces to move
+        io.in(room).emit('diceRolled', {
+          playerId: currentPlayer.playerId,
+          diceValue,
+          movablePieces: [], // No pieces can be moved
+        });
+        return;
+      }
+
+      // Determine opponent's ID
+      const opponentId = getOpponentId(game.players, currentPlayer.playerId);
+      if (!opponentId) {
+        io.to(socketId).emit('errorMessage', 'Opponent not found.');
+        return;
+      }
+
+      // Identify movable pieces that won't land on locked positions
+      const movablePieces = eligiblePieces.filter((pieceIndex) => {
+        const currentPos = game.gameState.currentPositions[currentPlayer.playerId][pieceIndex];
+        let newPos = currentPos;
+
+        if (currentPos >= 500) {
+          // Moving out of home
+          newPos = START_POSITIONS[currentPlayer.playerId];
+        } else {
+          // Calculate new position step by step
+          for (let i = 0; i < diceValue; i++) {
+            newPos = getNextPosition(currentPlayer.playerId, newPos);
+          }
+        }
+
+        // Check if the new position is locked by opponent
+        return !isPositionLocked(game.gameState, newPos, opponentId);
       });
+
+      if (movablePieces.length > 0) {
+        // Notify players about the dice roll and movable pieces
+        io.in(room).emit('diceRolled', {
+          playerId: currentPlayer.playerId,
+          diceValue,
+          movablePieces, // Array of piece indices that can be moved to unlocked positions
+        });
+      } else {
+        // Player misses their turn due to locked positions
+        io.in(room).emit('playerMissedTurn', {
+          playerId: currentPlayer.playerId,
+          diceValue,
+          reason: 'All possible moves are blocked by locked positions.',
+        });
+
+        // Switch turn to the next player
+        game.gameState.turn = (game.gameState.turn + 1) % game.players.length;
+        game.gameState.diceValue = null; // Reset dice value
+
+        // Notify players about the turn switch
+        io.in(room).emit('updateGameState', { gameState: game.gameState });
+        console.log(`Player ${currentPlayer.playerId} missed their turn in ${room}`);
+      }
     }
 
     /**
@@ -296,50 +421,13 @@ module.exports = (io) => {
         return false;
       }
 
-      return true;
-    }
-
-    /**
-     * Applies a player's move to the game state.
-     * @param {Object} gameState - The current game state.
-     * @param {string} playerId - The player ID ('P1', 'P3').
-     * @param {number} pieceIndex - The index of the piece being moved (0-3).
-     * @returns {Object} - Movement data including path of the piece and killed pieces.
-     */
-    function applyMove(gameState, playerId, pieceIndex) {
-      let currentPosition = gameState.currentPositions[playerId][pieceIndex];
-      const diceValue = gameState.diceValue;
-      let newPosition = currentPosition;
-
-      let path = []; // To record the sequence of positions
-
-      if (currentPosition >= 500) {
-        // Move out of home to starting position
-        newPosition = START_POSITIONS[playerId];
-        path.push(newPosition);
-      } else {
-        // Move piece step by step
-        for (let i = 0; i < diceValue; i++) {
-          newPosition = getNextPosition(playerId, newPosition);
-          path.push(newPosition);
-        }
+      // Check if the new position is locked by opponent
+      const opponentId = getOpponentId(game.players, playerId);
+      if (isPositionLocked(gameState, newPosition, opponentId)) {
+        return false; // Move is blocked
       }
 
-      // Update the piece's position
-      gameState.currentPositions[playerId][pieceIndex] = newPosition;
-
-      // Check for kills
-      const killedPieces = checkForKill(gameState, playerId, newPosition);
-      gameState.killOccurred = killedPieces.length > 0;
-
-      // Return movement data
-      return {
-        playerId,
-        pieceIndex,
-        path,
-        killOccurred: gameState.killOccurred,
-        killedPieces, // Include the details of killed pieces
-      };
+      return true;
     }
 
     /**
@@ -421,6 +509,49 @@ module.exports = (io) => {
       return gameState.currentPositions[playerId].every(
         (position) => position === HOME_POSITIONS[playerId]
       );
+    }
+
+    /**
+     * Handles a player's move and updates the game state accordingly.
+     * @param {Object} gameState - The current game state.
+     * @param {string} playerId - The player ID making the move.
+     * @param {number} pieceIndex - The index of the piece being moved.
+     * @returns {Object} - The movement data.
+     */
+    function applyMove(gameState, playerId, pieceIndex) {
+      let currentPosition = gameState.currentPositions[playerId][pieceIndex];
+      const diceValue = gameState.diceValue;
+      let newPosition = currentPosition;
+
+      let path = []; // To record the sequence of positions
+
+      if (currentPosition >= 500) {
+        // Move out of home to starting position
+        newPosition = START_POSITIONS[playerId];
+        path.push(newPosition);
+      } else {
+        // Move piece step by step
+        for (let i = 0; i < diceValue; i++) {
+          newPosition = getNextPosition(playerId, newPosition);
+          path.push(newPosition);
+        }
+      }
+
+      // Update the piece's position
+      gameState.currentPositions[playerId][pieceIndex] = newPosition;
+
+      // Check for kills
+      const killedPieces = checkForKill(gameState, playerId, newPosition);
+      gameState.killOccurred = killedPieces.length > 0;
+
+      // Return movement data
+      return {
+        playerId,
+        pieceIndex,
+        path,
+        killOccurred: gameState.killOccurred,
+        killedPieces, // Include the details of killed pieces
+      };
     }
   });
 };

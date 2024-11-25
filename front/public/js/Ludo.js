@@ -39,6 +39,7 @@ export class Ludo {
     this.socket.on('playerAssigned', this.onPlayerAssigned.bind(this));
     this.socket.on('startGame', this.onStartGame.bind(this));
     this.socket.on('diceRolled', this.onDiceRolled.bind(this));
+    this.socket.on('playerMissedTurn', this.onPlayerMissedTurn.bind(this)); // New Listener
     this.socket.on('updateGameState', this.onUpdateGameState.bind(this));
     this.socket.on('gameOver', this.onGameOver.bind(this));
     this.socket.on('opponentLeft', this.onOpponentLeft.bind(this));
@@ -81,7 +82,7 @@ export class Ludo {
   /**
    * Handler for when the dice is rolled.
    */
-  onDiceRolled({ playerId, diceValue }) {
+  onDiceRolled({ playerId, diceValue, movablePieces }) {
     this.diceValue = diceValue;
     UI.setDiceValue(diceValue);
     UI.unhighlightPieces();
@@ -89,13 +90,39 @@ export class Ludo {
     console.log(`Dice rolled by ${playerId}, value: ${diceValue}`);
 
     if (playerId === this.playerId) {
-      this.state = STATE.DICE_ROLLED;
-      console.log('It is my turn. Checking for eligible pieces.');
-      this.checkForEligiblePieces();
+      if (movablePieces.length > 0) {
+        this.state = STATE.DICE_ROLLED;
+        console.log('It is my turn. Highlighting eligible pieces.');
+        this.highlightEligiblePieces(movablePieces);
+      } else {
+        // No movable pieces; this should not happen as server handles turn skipping
+        this.state = STATE.DICE_NOT_ROLLED;
+        UI.disableDice();
+      }
     } else {
       this.state = STATE.WAITING_FOR_OPPONENT;
       console.log('Waiting for opponent to move.');
     }
+  }
+
+  /**
+   * Handler for when the player misses their turn due to locked positions.
+   */
+  onPlayerMissedTurn({ playerId, diceValue, reason }) {
+    if (playerId === this.playerId) {
+      alert(`You missed your turn: ${reason}`);
+      this.state = STATE.DICE_NOT_ROLLED;
+      UI.disableDice();
+    } else {
+      alert(`Opponent missed their turn: ${reason}`);
+      // Optionally, update UI to indicate it's now the player's turn
+      this.state = STATE.WAITING_FOR_OPPONENT;
+      UI.setTurn(this.getCurrentPlayerId());
+    }
+
+    // Update turn in UI
+    this.turn = (this.turn + 1) % this.players.length;
+    UI.setTurn(this.getCurrentPlayerId());
   }
 
   /**
@@ -265,6 +292,14 @@ export class Ludo {
       // No eligible pieces, notify the server to end the turn
       this.socket.emit('noMoves');
     }
+  }
+
+  /**
+   * Highlights eligible pieces based on the server's response.
+   * @param {Array<number>} movablePieces - Array of piece indices that can be moved.
+   */
+  highlightEligiblePieces(movablePieces) {
+    UI.highlightPieces(this.playerId, movablePieces);
   }
 
   /**
