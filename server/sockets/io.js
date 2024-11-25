@@ -74,10 +74,10 @@ module.exports = (io) => {
         handleNoMoves(room, socket.id);
       });
 
-      // Optional: Handle 'playerMissedTurn' if needed
+      // Handle 'playerMissedTurn' event (Optional)
       socket.on('playerMissedTurn', ({ diceValue }) => {
         console.log(`Player ${socket.id} missed their turn due to locked positions with dice value ${diceValue}.`);
-        // Additional logic can be added here if needed
+        // Additional server-side logic can be added here if needed
       });
     });
 
@@ -399,7 +399,198 @@ module.exports = (io) => {
       return true;
     }
 
-    // ... (rest of your existing functions)
+    /**
+     * Applies a player's move to the game state.
+     * @param {Object} gameState - The current game state.
+     * @param {string} playerId - The player ID ('P1', 'P3').
+     * @param {number} pieceIndex - The index of the piece being moved (0-3).
+     * @returns {Object} - Movement data including path of the piece and killed pieces.
+     */
+    function applyMove(gameState, playerId, pieceIndex) {
+      let currentPosition = gameState.currentPositions[playerId][pieceIndex];
+      const diceValue = gameState.diceValue;
+      let newPosition = currentPosition;
 
+      let path = []; // To record the sequence of positions
+
+      if (currentPosition >= 500) {
+        // Move out of home to starting position
+        newPosition = START_POSITIONS[playerId];
+        path.push(newPosition);
+      } else {
+        // Move piece step by step
+        for (let i = 0; i < diceValue; i++) {
+          newPosition = getNextPosition(playerId, newPosition);
+          path.push(newPosition);
+        }
+      }
+
+      // Update the piece's position
+      gameState.currentPositions[playerId][pieceIndex] = newPosition;
+
+      // Check for kills
+      const killedPieces = checkForKill(gameState, playerId, newPosition);
+      gameState.killOccurred = killedPieces.length > 0;
+
+      // Return movement data
+      return {
+        playerId,
+        pieceIndex,
+        path,
+        killOccurred: gameState.killOccurred,
+        killedPieces, // Include the details of killed pieces
+      };
+    }
+
+    /**
+     * Calculates the next position for a piece.
+     * @param {string} playerId - The player ID ('P1', 'P3').
+     * @param {number} currentPosition - The current position of the piece.
+     * @returns {number} - The next position of the piece.
+     */
+    function getNextPosition(playerId, currentPosition) {
+      if (currentPosition === TURNING_POINTS[playerId]) {
+        return HOME_ENTRANCE[playerId][0];
+      } else if (HOME_ENTRANCE[playerId].includes(currentPosition)) {
+        const index = HOME_ENTRANCE[playerId].indexOf(currentPosition);
+        if (index + 1 < HOME_ENTRANCE[playerId].length) {
+          return HOME_ENTRANCE[playerId][index + 1];
+        } else {
+          return HOME_POSITIONS[playerId]; // Reached home
+        }
+      } else if (currentPosition === 51) {
+        return 0;
+      } else {
+        return currentPosition + 1;
+      }
+    }
+
+    /**
+     * Checks if a position is beyond the home position.
+     * @param {string} playerId - The player ID ('P1', 'P3').
+     * @param {number} position - The position to check.
+     * @returns {boolean} - True if the position is beyond home, false otherwise.
+     */
+    function isBeyondHome(playerId, position) {
+      const homePosition = HOME_POSITIONS[playerId];
+      if (HOME_ENTRANCE[playerId].includes(position) || position === homePosition) {
+        return false;
+      }
+      return position > homePosition;
+    }
+
+    /**
+     * Checks if a kill has occurred due to a player's move.
+     * @param {Object} gameState - The current game state.
+     * @param {string} playerId - The player ID who moved.
+     * @param {number} newPosition - The new position of the moved piece.
+     * @returns {Array} - Array of killed pieces with details.
+     */
+    function checkForKill(gameState, playerId, newPosition) {
+      if (SAFE_POSITIONS.includes(newPosition)) {
+        // No kill can occur on safe positions
+        return [];
+      }
+
+      let killedPieces = [];
+
+      // Check all opponent players
+      for (const opponentId in gameState.currentPositions) {
+        if (opponentId !== playerId) {
+          const opponentPositions = gameState.currentPositions[opponentId];
+          opponentPositions.forEach((position, index) => {
+            if (position === newPosition) {
+              // Send opponent's piece back to base
+              gameState.currentPositions[opponentId][index] = BASE_POSITIONS[opponentId][index];
+              killedPieces.push({ opponentId, pieceIndex: index });
+            }
+          });
+        }
+      }
+
+      return killedPieces;
+    }
+
+    /**
+     * Determines if a player has won the game.
+     * @param {Object} gameState - The current game state.
+     * @param {string} playerId - The player ID to check.
+     * @returns {boolean} - True if the player has won, false otherwise.
+     */
+    function hasPlayerWon(gameState, playerId) {
+      return gameState.currentPositions[playerId].every(
+        (position) => position === HOME_POSITIONS[playerId]
+      );
+    }
   });
+
+  /**
+   * Checks if a given position is locked by two or more of the same player's pieces.
+   * @param {number} position - The board position to check.
+   * @param {string} playerId - The ID of the player ('P1', 'P3').
+   * @param {Object} gameState - The current game state.
+   * @returns {boolean} - True if the position is locked, false otherwise.
+   */
+  function isPositionLocked(position, playerId, gameState) {
+    // Base positions and home positions cannot be locked
+    const isBasePosition = Object.values(BASE_POSITIONS).flat().includes(position);
+    const isHomePosition = Object.values(HOME_POSITIONS).includes(position);
+    if (isBasePosition || isHomePosition) {
+      return false;
+    }
+
+    const playerPositions = gameState.currentPositions[playerId];
+    let count = 0;
+    playerPositions.forEach(pos => {
+      if (pos === position) {
+        count++;
+      }
+    });
+
+    return count >= 2;
+  }
+
+  /**
+   * Determines if the player has any available moves that do not involve moving to a locked position.
+   * @param {string} playerId - The ID of the player ('P1', 'P3').
+   * @param {number} diceValue - The value rolled on the dice.
+   * @param {Object} gameState - The current game state.
+   * @returns {boolean} - True if there are available moves, false otherwise.
+   */
+  function hasAvailableMoves(playerId, diceValue, gameState) {
+    const playerPieces = gameState.currentPositions[playerId];
+    
+    for (let pieceIndex = 0; pieceIndex < playerPieces.length; pieceIndex++) {
+      const currentPosition = playerPieces[pieceIndex];
+      
+      if (currentPosition >= 500) {
+        if (diceValue === 6) {
+          // Can move out of base
+          const targetPosition = START_POSITIONS[playerId];
+          if (!isPositionLocked(targetPosition, playerId, gameState)) {
+            return true;
+          }
+        }
+        continue;
+      }
+      
+      // Simulate moving the piece
+      let newPosition = currentPosition;
+      for (let i = 0; i < diceValue; i++) {
+        newPosition = getNextPosition(playerId, newPosition);
+      }
+      
+      // Check if new position is beyond home
+      if (isBeyondHome(playerId, newPosition)) {
+        continue;
+      }
+      
+      // Check if new position is locked
+      if (!isPositionLocked(newPosition, playerId, gameState)) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
 };

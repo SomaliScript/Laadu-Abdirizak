@@ -316,4 +316,35 @@ export class Ludo {
   getPlayerIdByIndex(index) {
     return this.players[index];
   }
+
+  /**
+   * Animates the movement of a piece along a given path.
+   */
+  animateMove(playerId, pieceIndex, path) {
+    if (path.length === 0) {
+      return;
+    }
+
+    let moveBy = path.length;
+    const interval = setInterval(() => {
+      const nextPosition = path.shift();
+      if (nextPosition !== undefined) {
+        this.setPiecePosition(playerId, pieceIndex, nextPosition);
+      }
+      moveBy--;
+
+      if (moveBy === 0 || path.length === 0) {
+        clearInterval(interval);
+        // After moving, check for any additional actions if needed
+      }
+    }, 300); // Adjust the interval time as needed
+  }
+
+  /**
+   * Sets the piece's position locally.
+   */
+  setPiecePosition(player, piece, newPosition) {
+    this.currentPositions[player][piece] = newPosition;
+    UI.setPiecePosition(player, piece, newPosition);
+  }
 }
