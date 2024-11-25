@@ -1,3 +1,5 @@
+// ludo/server/sockets/io.js
+
 // io.js
 
 module.exports = (io) => {
@@ -40,19 +42,21 @@ module.exports = (io) => {
       const playerId = assignPlayerId(room, socket.id);
       console.log(`Player ${playerId} (${socket.id}) joined ${room}`);
 
-      // Send the assigned player ID and room info to the client
-      socket.emit('playerAssigned', { playerId, room });
+      if (playerId) {
+        // Send the assigned player ID and room info to the client
+        socket.emit('playerAssigned', { playerId, room });
 
-      // Start the game when two players have joined
-      if (games[room].players.length === 2) {
-        // Initialize game state
-        games[room].gameState = initializeGameState(games[room].players);
-        // Notify players that the game is starting
-        io.in(room).emit('startGame', {
-          gameState: games[room].gameState,
-          players: games[room].players.map((p) => p.playerId),
-        });
-        console.log(`Game started in ${room}`);
+        // Start the game when two players have joined
+        if (games[room].players.length === 2) {
+          // Initialize game state
+          games[room].gameState = initializeGameState(games[room].players);
+          // Notify players that the game is starting
+          io.in(room).emit('startGame', {
+            gameState: games[room].gameState,
+            players: games[room].players.map((p) => p.playerId),
+          });
+          console.log(`Game started in ${room}`);
+        }
       }
 
       // Handle player disconnection
@@ -92,7 +96,7 @@ module.exports = (io) => {
      * Assigns a player ID to a socket in a room.
      * @param {string} room - The room ID.
      * @param {string} socketId - The socket ID.
-     * @returns {string} - The assigned player ID (e.g., 'P1', 'P3').
+     * @returns {string|null} - The assigned player ID (e.g., 'P1', 'P3'), or null if room is full.
      */
     function assignPlayerId(room, socketId) {
       const existingPlayerIds = games[room].players.map((player) => player.playerId);
@@ -131,12 +135,18 @@ module.exports = (io) => {
         }
       });
 
-      return {
+      const gameState = {
         currentPositions,
         turn: 0, // Index of the current player in the players array
         diceValue: null,
         killOccurred: false,
+        lockedPositions: [], // Initialize locked positions
       };
+
+      // Update locked positions initially
+      updateLockedPositions(gameState);
+
+      return gameState;
     }
 
     /**
@@ -183,10 +193,11 @@ module.exports = (io) => {
 
       console.log(`Player ${currentPlayer.playerId} rolled a ${diceValue}`);
 
-      // Notify both players about the dice roll
+      // Notify both players about the dice roll, including lockedPositions
       io.in(room).emit('diceRolled', {
         playerId: currentPlayer.playerId,
         diceValue,
+        lockedPositions: game.gameState.lockedPositions, // Include locked positions
       });
     }
 
@@ -212,12 +223,17 @@ module.exports = (io) => {
       // Validate move
       const isValid = validateMove(game.gameState, playerId, pieceIndex);
       if (!isValid) {
-        io.to(socketId).emit('errorMessage', 'Invalid move.');
+        io.to(socketId).emit('errorMessage', 'Invalid move. You cannot move past or land on a locked position.');
         return;
       }
 
       // Apply move and get movement data
       const moveData = applyMove(game.gameState, playerId, pieceIndex);
+
+      if (!moveData) {
+        io.to(socketId).emit('errorMessage', 'Invalid move due to locking rules.');
+        return;
+      }
 
       // Check for a win condition
       if (hasPlayerWon(game.gameState, playerId)) {
@@ -235,7 +251,7 @@ module.exports = (io) => {
       game.gameState.diceValue = null; // Reset dice value
       game.gameState.killOccurred = false; // Reset kill flag
 
-      // Send updated game state to clients, including movement data
+      // Send updated game state to clients, including movement data and locked positions
       io.in(room).emit('updateGameState', {
         gameState: game.gameState,
         moveData: moveData,
@@ -261,12 +277,12 @@ module.exports = (io) => {
       game.gameState.turn = (game.gameState.turn + 1) % game.players.length;
       game.gameState.diceValue = null;
 
-      // Send updated game state to clients
+      // Send updated game state to clients, including locked positions
       io.in(room).emit('updateGameState', { gameState: game.gameState });
     }
 
     /**
-     * Validates a player's move based on the game state and rules.
+     * Validates a player's move based on the game state and locking rules.
      * @param {Object} gameState - The current game state.
      * @param {string} playerId - The player ID ('P1', 'P3').
      * @param {number} pieceIndex - The index of the piece being moved (0-3).
@@ -276,19 +292,27 @@ module.exports = (io) => {
       const currentPosition = gameState.currentPositions[playerId][pieceIndex];
       const diceValue = gameState.diceValue;
 
-      // If the piece is at home position (500+)
+      // Rule 3: If piece is in base, can only move out with a six and starting position isn't locked
       if (currentPosition >= 500) {
-        // Can only move out of home if dice roll is 6
         if (diceValue !== 6) {
           return false;
+        }
+        if (gameState.lockedPositions.includes(START_POSITIONS[playerId])) {
+          return false; // Starting position is locked
         }
         return true;
       }
 
-      // Simulate moving the piece
+      // Simulate moving the piece step by step
       let newPosition = currentPosition;
+
       for (let i = 0; i < diceValue; i++) {
         newPosition = getNextPosition(playerId, newPosition);
+
+        // Rule 2: Cannot pass through or land on a locked position
+        if (gameState.lockedPositions.includes(newPosition)) {
+          return false;
+        }
       }
 
       // Check if the new position is beyond the home position
@@ -314,7 +338,7 @@ module.exports = (io) => {
       let path = []; // To record the sequence of positions
 
       if (currentPosition >= 500) {
-        // Move out of home to starting position
+        // Move out of base to starting position
         newPosition = START_POSITIONS[playerId];
         path.push(newPosition);
       } else {
@@ -331,6 +355,9 @@ module.exports = (io) => {
       // Check for kills
       const killedPieces = checkForKill(gameState, playerId, newPosition);
       gameState.killOccurred = killedPieces.length > 0;
+
+      // Update locked positions after the move
+      updateLockedPositions(gameState);
 
       // Return movement data
       return {
@@ -422,5 +449,46 @@ module.exports = (io) => {
         (position) => position === HOME_POSITIONS[playerId]
       );
     }
+
+    /**
+     * Determines if a position is a base or home position.
+     * @param {number} position - The position to check.
+     * @returns {boolean} - True if it's a base or home position, false otherwise.
+     */
+    function isBaseOrHome(position) {
+      return (
+        Object.values(BASE_POSITIONS).flat().includes(parseInt(position)) ||
+        Object.values(HOME_POSITIONS).includes(parseInt(position))
+      );
+    }
+
+    /**
+     * Updates the lockedPositions array in the gameState based on currentPositions.
+     * A position is locked if two or more pieces occupy it (excluding base and home positions).
+     * @param {Object} gameState - The current game state.
+     */
+    function updateLockedPositions(gameState) {
+      const positionCounts = {};
+
+      // Count the number of pieces on each position
+      for (const playerId in gameState.currentPositions) {
+        gameState.currentPositions[playerId].forEach(position => {
+          if (!isBaseOrHome(position)) {
+            positionCounts[position] = (positionCounts[position] || 0) + 1;
+          }
+        });
+      }
+
+      // Identify locked positions
+      const lockedPositions = [];
+      for (const position in positionCounts) {
+        if (positionCounts[position] >= 2) {
+          lockedPositions.push(parseInt(position));
+        }
+      }
+
+      gameState.lockedPositions = lockedPositions;
+    }
   });
+
 };

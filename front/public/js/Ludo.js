@@ -1,3 +1,5 @@
+// ludo/front/public/js/ludo.js
+
 // Ludo.js
 
 import { UI } from './UI.js';
@@ -23,6 +25,7 @@ export class Ludo {
     this.diceValue = null;
     this.state = null;
     this.players = [];
+    this.lockedPositions = []; // Initialize locked positions
 
     // Set up event listeners
     this.setupSocketListeners();
@@ -72,6 +75,7 @@ export class Ludo {
     this.turn = gameState.turn;
     this.diceValue = gameState.diceValue;
     this.state = STATE.DICE_NOT_ROLLED;
+    this.lockedPositions = gameState.lockedPositions || []; // Initialize locked positions
     UI.updateBoard(this.currentPositions);
     UI.setTurn(this.getCurrentPlayerId());
     UI.setDiceValue('-');
@@ -108,8 +112,13 @@ export class Ludo {
     this.currentPositions = gameState.currentPositions;
     this.turn = gameState.turn;
     this.diceValue = gameState.diceValue;
+    this.lockedPositions = gameState.lockedPositions || []; // Update locked positions
 
+    UI.updateBoard(this.currentPositions, this.lockedPositions); // Pass lockedPositions to UI
     UI.setTurn(this.getCurrentPlayerId());
+    UI.setDiceValue('-');
+
+    console.log('Locked Positions:', this.lockedPositions);
 
     // Update positions of killed pieces immediately
     if (moveData && moveData.killedPieces && moveData.killedPieces.length > 0) {
@@ -126,7 +135,7 @@ export class Ludo {
       this.animateMove(playerId, pieceIndex, path);
     } else {
       // If no move data, just update the board
-      UI.updateBoard(this.currentPositions);
+      UI.updateBoard(this.currentPositions, this.lockedPositions);
     }
 
     // Handle state changes
@@ -255,12 +264,31 @@ export class Ludo {
   }
 
   /**
-   * Checks for eligible pieces to move after a dice roll.
+   * Checks for eligible pieces to move after a dice roll, considering locked positions.
    */
   checkForEligiblePieces() {
     const eligiblePieces = this.getEligiblePieces(this.playerId);
-    if (eligiblePieces.length > 0) {
-      UI.highlightPieces(this.playerId, eligiblePieces);
+    const filteredEligiblePieces = eligiblePieces.filter(pieceIndex => {
+      const position = this.currentPositions[this.playerId][pieceIndex];
+
+      if (position >= 500) {
+        // Piece is in base: can enter if dice is 6 and starting position not locked
+        return this.diceValue === 6 && !this.lockedPositions.includes(START_POSITIONS[this.playerId]);
+      }
+
+      // Simulate the move to check if it passes through a locked position
+      let tempPosition = position;
+      for (let i = 0; i < this.diceValue; i++) {
+        tempPosition = this.getNextPosition(this.playerId, tempPosition);
+        if (this.lockedPositions.includes(tempPosition)) {
+          return false; // Move would pass through a locked position
+        }
+      }
+      return true; // Move is valid
+    });
+
+    if (filteredEligiblePieces.length > 0) {
+      UI.highlightPieces(this.playerId, filteredEligiblePieces);
     } else {
       // No eligible pieces, notify the server to end the turn
       this.socket.emit('noMoves');
@@ -325,5 +353,26 @@ export class Ludo {
    */
   getPlayerIdByIndex(index) {
     return this.players[index];
+  }
+
+  /**
+   * Helper function to get the next position for a piece.
+   * This should mirror the server's getNextPosition logic.
+   */
+  getNextPosition(playerId, currentPosition) {
+    if (currentPosition === TURNING_POINTS[playerId]) {
+      return HOME_ENTRANCE[playerId][0];
+    } else if (HOME_ENTRANCE[playerId].includes(currentPosition)) {
+      const index = HOME_ENTRANCE[playerId].indexOf(currentPosition);
+      if (index + 1 < HOME_ENTRANCE[playerId].length) {
+        return HOME_ENTRANCE[playerId][index + 1];
+      } else {
+        return HOME_POSITIONS[playerId]; // Reached home
+      }
+    } else if (currentPosition === 51) {
+      return 0;
+    } else {
+      return currentPosition + 1;
+    }
   }
 }
