@@ -1,245 +1,323 @@
-import { BASE_POSITIONS, HOME_ENTRANCE, HOME_POSITIONS, PLAYERS, SAFE_POSITIONS, START_POSITIONS, STATE, TURNING_POINTS } from './constants.js';
+// Ludo.js
+
 import { UI } from './UI.js';
+import {
+  STATE,
+  PLAYERS,
+  BASE_POSITIONS,
+  HOME_ENTRANCE,
+  HOME_POSITIONS,
+  SAFE_POSITIONS,
+  START_POSITIONS,
+  TURNING_POINTS,
+} from './constants.js';
 
 export class Ludo {
-    currentPositions = {
-        P1: [],
-        P2: [],
-        P3: [],
-        P4: [],
+  constructor() {
+    // Initialize properties
+    this.socket = io(); // Ensure 'io' is available globally or adjust as necessary
+    this.playerId = null;
+    this.room = null;
+    this.currentPositions = {};
+    this.turn = null;
+    this.diceValue = null;
+    this.state = null;
+    this.players = [];
+
+    // Set up event listeners
+    this.setupSocketListeners();
+    this.setupUIListeners();
+
+    // Join the game
+    this.socket.emit('joinGame');
+  }
+
+  /**
+   * Set up event listeners for socket events from the server.
+   */
+  setupSocketListeners() {
+    this.socket.on('playerAssigned', this.onPlayerAssigned.bind(this));
+    this.socket.on('startGame', this.onStartGame.bind(this));
+    this.socket.on('diceRolled', this.onDiceRolled.bind(this));
+    this.socket.on('updateGameState', this.onUpdateGameState.bind(this));
+    this.socket.on('gameOver', this.onGameOver.bind(this));
+    this.socket.on('opponentLeft', this.onOpponentLeft.bind(this));
+    this.socket.on('errorMessage', this.onErrorMessage.bind(this));
+  }
+
+  /**
+   * Set up UI event listeners for user interactions.
+   */
+  setupUIListeners() {
+    UI.listenDiceClick(this.onDiceClick.bind(this));
+    UI.listenPieceClick(this.onPieceClick.bind(this));
+    UI.listenResetClick(this.onResetClick.bind(this));
+  }
+
+  /**
+   * Handler for when the server assigns a player ID and room.
+   */
+  onPlayerAssigned({ playerId, room }) {
+    this.playerId = playerId;
+    this.room = room;
+    console.log(`Assigned ${playerId} in ${room}`);
+  }
+
+  /**
+   * Handler for when the game starts.
+   */
+  onStartGame({ gameState, players }) {
+    this.players = players; // Store the players array
+    this.currentPositions = gameState.currentPositions;
+    this.turn = gameState.turn;
+    this.diceValue = gameState.diceValue;
+    this.state = STATE.DICE_NOT_ROLLED;
+    UI.updateBoard(this.currentPositions);
+    UI.setTurn(this.getCurrentPlayerId());
+    UI.setDiceValue('-');
+    console.log('Game started');
+  }
+
+  /**
+   * Handler for when the dice is rolled.
+   */
+  onDiceRolled({ playerId, diceValue }) {
+    this.diceValue = diceValue;
+    UI.setDiceValue(diceValue);
+    UI.unhighlightPieces();
+
+    console.log(`Dice rolled by ${playerId}, value: ${diceValue}`);
+
+    if (playerId === this.playerId) {
+      this.state = STATE.DICE_ROLLED;
+      console.log('It is my turn. Checking for eligible pieces.');
+      this.checkForEligiblePieces();
+    } else {
+      this.state = STATE.WAITING_FOR_OPPONENT;
+      console.log('Waiting for opponent to move.');
+    }
+  }
+
+  /**
+   * Handler for when the game state is updated by the server.
+   */
+  onUpdateGameState({ gameState, moveData }) {
+    console.log('Received updated game state:', gameState);
+
+    // Store previous positions to calculate movements
+    const previousPositions = JSON.parse(JSON.stringify(this.currentPositions));
+
+    // Update local game state
+    this.currentPositions = gameState.currentPositions;
+    this.turn = gameState.turn;
+    this.diceValue = gameState.diceValue;
+
+    UI.setTurn(this.getCurrentPlayerId());
+
+    if (moveData) {
+      const { playerId, pieceIndex, path } = moveData;
+
+      // Animate the move
+      this.animateMove(playerId, pieceIndex, path);
+    } else {
+      // If no move data, just update the board
+      UI.updateBoard(this.currentPositions);
     }
 
-    _diceValue;
-    get diceValue() {
-        return this._diceValue;
-    }
-    set diceValue(value) {
-        this._diceValue = value;
-
-        UI.setDiceValue(value);
-    }
-
-    _turn;
-    get turn() {
-        return this._turn;
-    }
-    set turn(value) {
-        this._turn = value;
-        UI.setTurn(value);
-    }
-
-    _state;
-    get state() {
-        return this._state;
-    }
-    set state(value) {
-        this._state = value;
-
-        if(value === STATE.DICE_NOT_ROLLED) {
-            UI.enableDice();
-            UI.unhighlightPieces();
-        } else {
-            UI.disableDice();
-        }
-    }
-
-    constructor() {
-        console.log('Hello World! Lets play Ludo!');
-
-        // this.diceValue = 4;
-        // this.turn = 0;
-        // this.state = STATE.DICE_ROLLED;
-        this.listenDiceClick();
-        this.listenResetClick();
-        this.listenPieceClick();
-
-        this.resetGame();
-        // this.setPiecePosition('P1', 0, 0);
-        // this.setPiecePosition('P2', 0, 1);
-        // this.diceValue = 6;
-        // console.log(this.getEligiblePieces('P1'))
-        
-    }
-
-    listenDiceClick() {
-        UI.listenDiceClick(this.onDiceClick.bind(this))
-    }
-
-    onDiceClick() {
-        console.log('dice clicked!');
-        this.diceValue = 1 + Math.floor(Math.random() * 6);
-        this.state = STATE.DICE_ROLLED;
-        
-        this.checkForEligiblePieces();
-    }
-
-    checkForEligiblePieces() {
-        const player = PLAYERS[this.turn];
-        // eligible pieces of given player
-        const eligiblePieces = this.getEligiblePieces(player);
-        if(eligiblePieces.length) {
-            // highlight the pieces
-            UI.highlightPieces(player, eligiblePieces);
-        } else {
-            this.incrementTurn();
-        }
-    }
-
-    incrementTurn() {
-        this.turn = (this.turn + 1) % 4;  
-        //this.turn = this.turn === 0 ? 1 : 0;
+    // Handle state changes
+    if (this.getCurrentPlayerId() === this.playerId) {
+      if (this.state !== STATE.DICE_ROLLED) {
         this.state = STATE.DICE_NOT_ROLLED;
+        UI.enableDice();
+      }
+    } else {
+      this.state = STATE.WAITING_FOR_OPPONENT;
+      UI.disableDice();
+    }
+  }
+
+  /**
+   * Animates the movement of a piece along a given path.
+   */
+  animateMove(playerId, pieceIndex, path) {
+    if (path.length === 0) {
+      return;
     }
 
-    getEligiblePieces(player) {
-        return [0, 1, 2, 3].filter(piece => {
-            const currentPosition = this.currentPositions[player][piece];
+    let moveBy = path.length;
+    const interval = setInterval(() => {
+      const nextPosition = path.shift();
+      if (nextPosition !== undefined) {
+        this.setPiecePosition(playerId, pieceIndex, nextPosition);
+      }
+      moveBy--;
 
-            if(currentPosition === HOME_POSITIONS[player]) {
-                return false;
-            }
+      if (moveBy === 0 || path.length === 0) {
+        clearInterval(interval);
+        // After moving, check for any additional actions if needed
+      }
+    }, 300); // Adjust the interval time as needed
+  }
 
-            if(
-                BASE_POSITIONS[player].includes(currentPosition)
-                && this.diceValue !== 6
-            ){
-                return false;
-            }
+  /**
+   * Sets the piece's position locally.
+   */
+  setPiecePosition(player, piece, newPosition) {
+    this.currentPositions[player][piece] = newPosition;
+    UI.setPiecePosition(player, piece, newPosition);
+  }
 
-            if(
-                HOME_ENTRANCE[player].includes(currentPosition)
-                && this.diceValue > HOME_POSITIONS[player] - currentPosition
-                ) {
-                return false;
-            }
+  /**
+   * Handler for when the game is over.
+   */
+  onGameOver({ winner }) {
+    if (winner === this.playerId) {
+      alert('Congratulations! You won!');
+    } else {
+      alert('You lost. Better luck next time!');
+    }
+    // Optionally reset the game or redirect to a lobby
+  }
 
-            return true;
-        });
+  /**
+   * Handler for when the opponent leaves the game.
+   */
+  onOpponentLeft(message) {
+    alert(message);
+    // Optionally reset the game or wait for a new player
+  }
+
+  /**
+   * Handler for error messages from the server.
+   */
+  onErrorMessage(message) {
+    alert(message);
+  }
+
+  /**
+   * Handler for when the dice is clicked.
+   */
+  onDiceClick() {
+    if (this.state !== STATE.DICE_NOT_ROLLED || this.playerId !== this.getCurrentPlayerId()) {
+      alert('It is not your turn to roll the dice.');
+      return;
+    }
+    console.log('Rolling the dice.');
+    // Emit the rollDice event to the server
+    this.socket.emit('rollDice');
+    UI.disableDice();
+  }
+
+  /**
+   * Handler for when a piece is clicked.
+   */
+  onPieceClick(event) {
+    const target = event.target;
+
+    if (!target.classList.contains('player-piece') || !target.classList.contains('highlight')) {
+      return;
+    }
+    console.log('Piece clicked');
+
+    const player = target.getAttribute('player-id');
+    const piece = parseInt(target.getAttribute('piece'));
+
+    if (player !== this.playerId) {
+      alert('You can only move your own pieces.');
+      return;
     }
 
-    listenResetClick() {
-        UI.listenResetClick(this.resetGame.bind(this))
+    if (this.state !== STATE.DICE_ROLLED || this.playerId !== this.getCurrentPlayerId()) {
+      alert('It is not your turn to move.');
+      return;
     }
 
-    resetGame() {
-        console.log('reset game');
-        this.currentPositions = structuredClone(BASE_POSITIONS);
+    // Handle the piece click logic
+    this.handlePieceClick(player, piece);
+    UI.unhighlightPieces();
+  }
 
-        PLAYERS.forEach(player => {
-            [0, 1, 2, 3].forEach(piece => {
-                this.setPiecePosition(player, piece, this.currentPositions[player][piece])
-            })
-        });
+  /**
+   * Handles the logic when a piece is clicked.
+   */
+  handlePieceClick(player, piece) {
+    console.log(`Handling piece click for player ${player}, piece ${piece}`);
+    // We don't move the piece here; we wait for the server to confirm and send the move data
 
-        this.turn = 0;
-        this.state = STATE.DICE_NOT_ROLLED;
+    // Send the move to the server
+    this.socket.emit('makeMove', { pieceIndex: piece });
+    this.state = STATE.DICE_NOT_ROLLED;
+  }
+
+  /**
+   * Checks for eligible pieces to move after a dice roll.
+   */
+  checkForEligiblePieces() {
+    const eligiblePieces = this.getEligiblePieces(this.playerId);
+    if (eligiblePieces.length > 0) {
+      UI.highlightPieces(this.playerId, eligiblePieces);
+    } else {
+      // No eligible pieces, notify the server to end the turn
+      this.socket.emit('noMoves');
     }
+  }
 
-    listenPieceClick() {
-        UI.listenPieceClick(this.onPieceClick.bind(this));
-    }
+  /**
+   * Determines which pieces are eligible to move.
+   */
+  getEligiblePieces(player) {
+    const pieces = this.currentPositions[player];
+    const diceValue = this.diceValue;
+    const eligiblePieces = [];
 
-    onPieceClick(event) {
-        const target = event.target;
+    pieces.forEach((currentPosition, pieceIndex) => {
+      if (currentPosition === HOME_POSITIONS[player]) {
+        // Piece already at home
+        return;
+      }
 
-        if(!target.classList.contains('player-piece') || !target.classList.contains('highlight')) {
-            return;
+      if (BASE_POSITIONS[player].includes(currentPosition)) {
+        // Piece is in base (home position)
+        if (diceValue === 6) {
+          eligiblePieces.push(pieceIndex);
         }
-        console.log('piece clicked')
+        return;
+      }
 
-        const player = target.getAttribute('player-id');
-        const piece = target.getAttribute('piece');
-        this.handlePieceClick(player, piece);
-    }
-
-    handlePieceClick(player, piece) {
-        console.log(player, piece);
-        const currentPosition = this.currentPositions[player][piece];
-        
-        if(BASE_POSITIONS[player].includes(currentPosition)) {
-            this.setPiecePosition(player, piece, START_POSITIONS[player]);
-            this.state = STATE.DICE_NOT_ROLLED;
-            return;
+      if (HOME_ENTRANCE[player].includes(currentPosition)) {
+        const distanceToHome = HOME_POSITIONS[player] - currentPosition;
+        if (diceValue > distanceToHome) {
+          // Dice value is too high to reach home
+          return;
         }
+      }
 
-        UI.unhighlightPieces();
-        this.movePiece(player, piece, this.diceValue);
-    }
+      // All other pieces are eligible
+      eligiblePieces.push(pieceIndex);
+    });
 
-    setPiecePosition(player, piece, newPosition) {
-        this.currentPositions[player][piece] = newPosition;
-        // socket.emit('move', this.currentPositions, newPosition);
-        UI.setPiecePosition(player, piece, newPosition)
-    }
+    return eligiblePieces;
+  }
 
-    movePiece(player, piece, moveBy) {
-        // this.setPiecePosition(player, piece, this.currentPositions[player][piece] + moveBy)
-        const interval = setInterval(() => {
-            this.incrementPiecePosition(player, piece);
-            moveBy--;
+  /**
+   * Handler for when the reset button is clicked.
+   */
+  onResetClick() {
+    // Optionally implement a reset functionality
+    alert('Reset is not implemented in multiplayer mode.');
+  }
 
-            if(moveBy === 0) {
-                clearInterval(interval);
+  /**
+   * Gets the current player's ID based on the turn.
+   */
+  getCurrentPlayerId() {
+    return this.getPlayerIdByIndex(this.turn);
+  }
 
-                // check if player won
-                if(this.hasPlayerWon(player)) {
-                    alert(`Player: ${player} has won!`);
-                    this.resetGame();
-                    return;
-                }
-
-                const isKill = this.checkForKill(player, piece);
-
-                if(isKill || this.diceValue === 6) {
-                    this.state = STATE.DICE_NOT_ROLLED;
-                    return;
-                }
-
-                this.incrementTurn();
-            }
-        }, 200);
-    }
-
-    checkForKill(player, piece) {
-        const currentPosition = this.currentPositions[player][piece];
-        let kill = false;
-
-        // Check against all other players
-        PLAYERS.forEach(opponent => {
-            if (opponent !== player) {  // Don't check against same player
-                [0, 1, 2, 3].forEach(piece => {
-                    const opponentPosition = this.currentPositions[opponent][piece];
-
-                    if(currentPosition === opponentPosition && !SAFE_POSITIONS.includes(currentPosition)) {
-                        this.setPiecePosition(opponent, piece, BASE_POSITIONS[opponent][piece]);
-                        kill = true;
-                    }
-                });
-            }
-        });
-
-        return kill;
-    }
-    
-    
-
-    hasPlayerWon(player) {
-        return [0, 1, 2, 3].every(piece => this.currentPositions[player][piece] === HOME_POSITIONS[player])
-    }
-
-    incrementPiecePosition(player, piece) {
-        this.setPiecePosition(player, piece, this.getIncrementedPosition(player, piece));
-    }
-    
-    getIncrementedPosition(player, piece) {
-        const currentPosition = this.currentPositions[player][piece];
-
-        if(currentPosition === TURNING_POINTS[player]) {
-            return HOME_ENTRANCE[player][0];
-        }
-        else if(currentPosition === 51) {
-            return 0;
-        }
-        return currentPosition + 1;
-    }
+  /**
+   * Gets the player ID by index.
+   */
+  getPlayerIdByIndex(index) {
+    return this.players[index];
+  }
 }

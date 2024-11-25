@@ -117,46 +117,49 @@ export const COORDINATES_MAP = {
 
 export const STEP_LENGTH = 6.66;
 
-export const PLAYERS = ['P1', 'P2', 'P3', 'P4'];
+export const PLAYERS = ['P1', 'P3'];
+//export const PLAYERS = ['P1', 'P2', 'P3', 'P4'];
 
 export const BASE_POSITIONS = {
     P1: [500, 501, 502, 503],
-    P2: [600, 601, 602, 603],
+    //P2: [600, 601, 602, 603],
     P3: [700, 701, 702, 703],
-    P4: [800, 801, 802, 803],
+    //P4: [800, 801, 802, 803],
 }
 
 export const START_POSITIONS = {
     P1: 0,
-    P2: 13,
+   //P2: 13,
     P3: 26,
-    P4: 39,
+    //P4: 39,
 }
 
 export const HOME_ENTRANCE = {
     P1: [100, 101, 102, 103, 104],
-    P2: [200, 201, 202, 203, 204],
+    //P2: [200, 201, 202, 203, 204],
     P3: [300, 301, 302, 303, 304],
-    P4: [400, 401, 402, 403, 404],
+    //P4: [400, 401, 402, 403, 404],
 }
 
 export const HOME_POSITIONS = {
     P1: 105,
-    P2: 205,
+    //P2: 205,
     P3: 305,
-    P4: 405,
+    //P4: 405,
 }
 
 export const TURNING_POINTS = {
     P1: 50,
-    P2: 11,
+    //P2: 11,
     P3: 24,
-    P4: 37,
+    //P4: 37,
 }
 
-export const SAFE_POSITIONS = [0, 13, 26, 39];
+export const SAFE_POSITIONS = [0, 26];
+//export const SAFE_POSITIONS = [0, 13, 26, 39];
 
 export const STATE = {
-    DICE_NOT_ROLLED: 'DICE_NOT_ROLLED',
-    DICE_ROLLED: 'DICE_ROLLED',
-}
+  DICE_NOT_ROLLED: 'DICE_NOT_ROLLED',
+  DICE_ROLLED: 'DICE_ROLLED',
+  WAITING_FOR_OPPONENT: 'WAITING_FOR_OPPONENT',
+};
