@@ -269,136 +269,134 @@ export class Ludo {
     }
   }
 
-/**
- * Determines which pieces are eligible to move.
- */
-getEligiblePieces(player) {
-  const pieces = this.currentPositions[player];
-  const diceValue = this.diceValue;
-  const eligiblePieces = [];
-  const lockedPieces = this.getLockedPieces(player);
+  /**
+   * Determines which pieces are eligible to move.
+   */
+  getEligiblePieces(player) {
+    const pieces = this.currentPositions[player];
+    const diceValue = this.diceValue;
+    const eligiblePieces = [];
+    const lockedPieces = this.getLockedPieces(player);
 
-  console.log(`getEligiblePieces: Player ${player}, Dice Value ${diceValue}`);
-  console.log(`getEligiblePieces: Locked Pieces -`, lockedPieces);
+    console.log(`getEligiblePieces: Player ${player}, Dice Value ${diceValue}`);
+    console.log(`getEligiblePieces: Locked Pieces -`, lockedPieces);
 
-  pieces.forEach((currentPosition, pieceIndex) => {
-    if (currentPosition === HOME_POSITIONS[player]) {
-      // Piece already at home
-      console.log(`Piece ${pieceIndex} is already at home.`);
-      return;
-    }
-
-    if (BASE_POSITIONS[player].includes(currentPosition)) {
-      // Piece is in base
-      if (diceValue === 6) {
-        // Check if starting position is blocked by opponent's lock
-        const startingPosition = START_POSITIONS[player];
-        const lockOwner = this.lockedPositions[startingPosition];
-        if (!lockOwner || lockOwner === player) {
-          eligiblePieces.push(pieceIndex);
-          console.log(`Piece ${pieceIndex} in base can move out.`);
-        } else {
-          console.log(`Piece ${pieceIndex} in base cannot move out due to locked starting position.`);
-        }
-      } else {
-        console.log(`Piece ${pieceIndex} in base cannot move out without rolling a 6.`);
-      }
-      return;
-    }
-
-    if (HOME_ENTRANCE[player].includes(currentPosition)) {
-      const index = HOME_ENTRANCE[player].indexOf(currentPosition);
-      const stepsToHome = HOME_ENTRANCE[player].length - index;
-      if (diceValue > stepsToHome) {
-        // Dice value too high to reach home
-        console.log(`Piece ${pieceIndex} cannot move to home with dice value ${diceValue}.`);
+    pieces.forEach((currentPosition, pieceIndex) => {
+      if (currentPosition === HOME_POSITIONS[player]) {
+        // Piece already at home
+        console.log(`Piece ${pieceIndex} is already at home.`);
         return;
       }
-    }
 
-    // Check if moving this piece is blocked by a lock
-    if (!this.isMoveBlocked(player, currentPosition, diceValue)) {
-      eligiblePieces.push(pieceIndex);
-      console.log(`Piece ${pieceIndex} is eligible to move.`);
-    } else {
-      console.log(`Piece ${pieceIndex} is blocked by an opponent's lock.`);
-    }
-  });
-
-  if (lockedPieces.length > 0) {
-    // Filter eligible pieces to only include locked pieces that can be moved
-    const movableLockedPieces = lockedPieces.filter((pieceIndex) => {
-      const currentPosition = this.currentPositions[player][pieceIndex];
-      const path = this.getPath(player, currentPosition, diceValue);
-      const canMove = !path.some((pos) => {
-        const lockOwner = this.lockedPositions[pos];
-        return lockOwner && lockOwner !== player;
-      });
-      if (!canMove) {
-        console.log(`Locked Piece ${pieceIndex} cannot be moved.`);
-      } else {
-        console.log(`Locked Piece ${pieceIndex} can be moved.`);
+      if (BASE_POSITIONS[player].includes(currentPosition)) {
+        // Piece is in base
+        if (diceValue === 6) {
+          // Check if starting position is blocked by opponent's lock
+          const startingPosition = START_POSITIONS[player];
+          const lockOwner = this.lockedPositions[startingPosition];
+          if (!lockOwner || lockOwner === player) {
+            eligiblePieces.push(pieceIndex);
+            console.log(`Piece ${pieceIndex} in base can move out.`);
+          } else {
+            console.log(`Piece ${pieceIndex} in base cannot move out due to locked starting position.`);
+          }
+        } else {
+          console.log(`Piece ${pieceIndex} in base cannot move out without rolling a 6.`);
+        }
+        return;
       }
-      return canMove;
+
+      if (HOME_ENTRANCE[player].includes(currentPosition)) {
+        const index = HOME_ENTRANCE[player].indexOf(currentPosition);
+        const stepsToHome = HOME_ENTRANCE[player].length - index;
+        if (diceValue > stepsToHome) {
+          // Dice value too high to reach home
+          console.log(`Piece ${pieceIndex} cannot move to home with dice value ${diceValue}.`);
+          return;
+        }
+      }
+
+      // Check if moving this piece is blocked by a lock
+      if (!this.isMoveBlocked(player, currentPosition, diceValue)) {
+        eligiblePieces.push(pieceIndex);
+        console.log(`Piece ${pieceIndex} is eligible to move.`);
+      } else {
+        console.log(`Piece ${pieceIndex} is blocked by an opponent's lock.`);
+      }
     });
 
-    if (movableLockedPieces.length > 0) {
-      console.log(`getEligiblePieces: Movable Locked Pieces -`, movableLockedPieces);
-      return movableLockedPieces;
-    }
-    // If no locked pieces can be moved, proceed to highlight other eligible pieces
-    console.log(`getEligiblePieces: No movable locked pieces. Highlighting other eligible pieces.`);
-  }
+    if (lockedPieces.length > 0) {
+      // Filter eligible pieces to only include locked pieces that can be moved
+      const movableLockedPieces = lockedPieces.filter((pieceIndex) => {
+        const currentPosition = this.currentPositions[player][pieceIndex];
+        const path = this.getPath(player, currentPosition, diceValue);
+        const canMove = !path.some((pos) => {
+          const lockOwner = this.lockedPositions[pos];
+          return lockOwner && lockOwner !== player;
+        });
+        if (!canMove) {
+          console.log(`Locked Piece ${pieceIndex} cannot be moved.`);
+        } else {
+          console.log(`Locked Piece ${pieceIndex} can be moved.`);
+        }
+        return canMove;
+      });
 
-  console.log(`getEligiblePieces: Eligible Pieces -`, eligiblePieces);
-  return eligiblePieces;
-}
-  
-/**
- * Retrieves the indices of the player's locked pieces.
- * @param {string} player - The player ID ('P1', 'P3').
- * @returns {Array<number>} - An array of piece indices that are locked.
- */
-getLockedPieces(player) {
-  const lockedPieces = [];
-  
-  if (!this.lockedPositions) {
-    console.warn('getLockedPieces: lockedPositions is undefined.');
+      if (movableLockedPieces.length > 0) {
+        console.log(`getEligiblePieces: Movable Locked Pieces -`, movableLockedPieces);
+        return movableLockedPieces;
+      }
+      // If no locked pieces can be moved, proceed to highlight other eligible pieces
+      console.log(`getEligiblePieces: No movable locked pieces. Highlighting other eligible pieces.`);
+    }
+
+    console.log(`getEligiblePieces: Eligible Pieces -`, eligiblePieces);
+    return eligiblePieces;
+  }
+    
+  /**
+   * Retrieves the indices of the player's locked pieces.
+   * @param {string} player - The player ID ('P1', 'P3').
+   * @returns {Array<number>} - An array of piece indices that are locked.
+   */
+  getLockedPieces(player) {
+    const lockedPieces = [];
+    
+    if (!this.lockedPositions) {
+      console.warn('getLockedPieces: lockedPositions is undefined.');
+      return lockedPieces;
+    }
+
+    this.currentPositions[player].forEach((position, index) => {
+      if (this.lockedPositions[position] === player) {
+        lockedPieces.push(index);
+      }
+    });
+
+    console.log(`getLockedPieces: Player ${player} has locked pieces at indices -`, lockedPieces);
     return lockedPieces;
   }
+    
+  /**
+   * Checks if moving a piece from currentPosition with diceValue is blocked by any locked positions.
+   * @param {string} player - The player ID ('P1', 'P3').
+   * @param {number} currentPosition - The current position of the piece.
+   * @param {number} diceValue - The number of steps to move.
+   * @returns {boolean} - True if the move is blocked, false otherwise.
+   */
+  isMoveBlocked(player, currentPosition, diceValue) {
+    const path = this.getPath(player, currentPosition, diceValue);
 
-  this.currentPositions[player].forEach((position, index) => {
-    if (this.lockedPositions[position] === player) {
-      lockedPieces.push(index);
+    for (const pos of path) {
+      const lockOwner = this.lockedPositions[pos];
+      if (lockOwner && lockOwner !== player) {
+        // Path is blocked by an opponent's lock
+        return true;
+      }
     }
-  });
 
-  console.log(`getLockedPieces: Player ${player} has locked pieces at indices -`, lockedPieces);
-  return lockedPieces;
-}
-  
-/**
- * Retrieves the indices of the player's locked pieces.
- * @param {string} player - The player ID ('P1', 'P3').
- * @returns {Array<number>} - An array of piece indices that are locked.
- */
-getLockedPieces(player) {
-  const lockedPieces = [];
-  
-  if (!this.lockedPositions) {
-    console.warn('getLockedPieces: lockedPositions is undefined.');
-    return lockedPieces;
+    return false;
   }
-
-  this.currentPositions[player].forEach((position, index) => {
-    if (this.lockedPositions[position] === player) {
-      lockedPieces.push(index);
-    }
-  });
-
-  console.log(`getLockedPieces: Player ${player} has locked pieces at indices -`, lockedPieces);
-  return lockedPieces;
-}
 
 
   /**
