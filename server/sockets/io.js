@@ -38,6 +38,10 @@ module.exports = (io) => {
       // Join the room
       socket.join(room);
       const playerId = assignPlayerId(room, socket.id);
+      if (playerId === null) {
+        console.log(`Player ${socket.id} could not join room ${room} as it is full.`);
+        return;
+      }
       console.log(`Player ${playerId} (${socket.id}) joined ${room}`);
 
       // Send the assigned player ID and room info to the client
@@ -47,6 +51,8 @@ module.exports = (io) => {
       if (games[room].players.length === 2) {
         // Initialize game state
         games[room].gameState = initializeGameState(games[room].players);
+        // Update locked positions initially (likely none)
+        updateLockedPositions(games[room].gameState);
         // Notify players that the game is starting
         io.in(room).emit('startGame', {
           gameState: games[room].gameState,
@@ -92,7 +98,7 @@ module.exports = (io) => {
      * Assigns a player ID to a socket in a room.
      * @param {string} room - The room ID.
      * @param {string} socketId - The socket ID.
-     * @returns {string} - The assigned player ID (e.g., 'P1', 'P3').
+     * @returns {string|null} - The assigned player ID (e.g., 'P1', 'P3') or null if room is full.
      */
     function assignPlayerId(room, socketId) {
       const existingPlayerIds = games[room].players.map((player) => player.playerId);
@@ -105,11 +111,13 @@ module.exports = (io) => {
 
       if (!playerId) {
         // Room is full
-        socket.emit('errorMessage', 'Room is full.');
+        console.log(`assignPlayerId: Room ${room} is full. Player ${socketId} cannot join.`);
+        io.to(socketId).emit('errorMessage', 'Room is full.');
         return null;
       }
 
       games[room].players.push({ socketId, playerId });
+      console.log(`assignPlayerId: Assigned Player ${playerId} to socket ${socketId} in room ${room}`);
       return playerId;
     }
 
@@ -127,7 +135,7 @@ module.exports = (io) => {
         if (BASE_POSITIONS[playerId]) {
           currentPositions[playerId] = [...BASE_POSITIONS[playerId]]; // Copy base positions
         } else {
-          console.error(`Unknown player ID: ${playerId}`);
+          console.error(`initializeGameState: Unknown player ID: ${playerId}`);
         }
       });
 
@@ -136,7 +144,68 @@ module.exports = (io) => {
         turn: 0, // Index of the current player in the players array
         diceValue: null,
         killOccurred: false,
+        lockedPositions: {}, // Initialize lockedPositions as an empty object
       };
+    }
+
+    /**
+     * Updates the lockedPositions in the game state based on currentPositions.
+     * A position is locked if a player has two or more pieces on it (excluding base and home positions).
+     * @param {Object} gameState - The current game state.
+     */
+    function updateLockedPositions(gameState) {
+      const positionCount = {};
+
+      console.log(`updateLockedPositions: Updating locked positions.`);
+
+      // Iterate through each player's pieces
+      for (const playerId in gameState.currentPositions) {
+        const positions = gameState.currentPositions[playerId];
+        positions.forEach((position) => {
+          // Skip base and home positions
+          if (
+            BASE_POSITIONS[playerId].includes(position) ||
+            HOME_POSITIONS[playerId] === position
+          ) {
+            return;
+          }
+
+          if (!positionCount[position]) {
+            positionCount[position] = {};
+          }
+
+          if (!positionCount[position][playerId]) {
+            positionCount[position][playerId] = 0;
+          }
+
+          positionCount[position][playerId]++;
+        });
+      }
+
+      // Reset lockedPositions
+      gameState.lockedPositions = {};
+
+      // Determine locked positions
+      for (const position in positionCount) {
+        for (const playerId in positionCount[position]) {
+          if (positionCount[position][playerId] >= 2) {
+            gameState.lockedPositions[position] = playerId;
+            console.log(`updateLockedPositions: Position ${position} locked by ${playerId}`);
+          }
+        }
+      }
+
+      console.log(`updateLockedPositions: Locked positions updated:`, gameState.lockedPositions);
+    }
+
+    /**
+     * Checks if a position is locked.
+     * @param {Object} gameState - The current game state.
+     * @param {number} position - The position to check.
+     * @returns {string|null} - The player ID who has locked the position or null if not locked.
+     */
+    function isPositionLocked(gameState, position) {
+      return gameState.lockedPositions[position] || null;
     }
 
     /**
@@ -147,9 +216,12 @@ module.exports = (io) => {
     function handleDisconnect(room, socketId) {
       if (games[room]) {
         // Remove the player from the room
+        const removedPlayer = games[room].players.find((player) => player.socketId === socketId);
         games[room].players = games[room].players.filter(
           (player) => player.socketId !== socketId
         );
+
+        console.log(`handleDisconnect: Player ${removedPlayer ? removedPlayer.playerId : socketId} left room ${room}`);
 
         // Notify remaining player
         if (games[room].players.length > 0) {
@@ -157,7 +229,7 @@ module.exports = (io) => {
         } else {
           // Delete the game if no players are left
           delete games[room];
-          console.log(`Room ${room} deleted`);
+          console.log(`handleDisconnect: Room ${room} deleted`);
         }
       }
     }
@@ -169,10 +241,14 @@ module.exports = (io) => {
      */
     function handleDiceRoll(room, socketId) {
       const game = games[room];
-      if (!game) return;
+      if (!game || !game.gameState) {
+        console.log(`handleDiceRoll: Game not found for room ${room}`);
+        return;
+      }
 
       const currentPlayer = game.players[game.gameState.turn];
       if (currentPlayer.socketId !== socketId) {
+        console.log(`handleDiceRoll: Player ${socketId} attempted to roll dice out of turn.`);
         io.to(socketId).emit('errorMessage', 'It is not your turn to roll the dice.');
         return;
       }
@@ -181,7 +257,7 @@ module.exports = (io) => {
       const diceValue = Math.floor(Math.random() * 6) + 1;
       game.gameState.diceValue = diceValue;
 
-      console.log(`Player ${currentPlayer.playerId} rolled a ${diceValue}`);
+      console.log(`handleDiceRoll: Player ${currentPlayer.playerId} rolled a ${diceValue}`);
 
       // Notify both players about the dice roll
       io.in(room).emit('diceRolled', {
@@ -198,10 +274,14 @@ module.exports = (io) => {
      */
     function handleMakeMove(room, socketId, data) {
       const game = games[room];
-      if (!game) return;
+      if (!game || !game.gameState) {
+        console.log(`handleMakeMove: Game not found for room ${room}`);
+        return;
+      }
 
       const currentPlayer = game.players[game.gameState.turn];
       if (currentPlayer.socketId !== socketId) {
+        console.log(`handleMakeMove: Player ${socketId} attempted to move out of turn.`);
         io.to(socketId).emit('errorMessage', 'It is not your turn to move.');
         return;
       }
@@ -209,18 +289,23 @@ module.exports = (io) => {
       const { pieceIndex } = data;
       const playerId = currentPlayer.playerId;
 
+      console.log(`handleMakeMove: Player ${playerId} attempting to move piece ${pieceIndex}`);
+
       // Validate move
       const isValid = validateMove(game.gameState, playerId, pieceIndex);
+      console.log(`handleMakeMove: Move validation result: ${isValid}`);
       if (!isValid) {
-        io.to(socketId).emit('errorMessage', 'Invalid move.');
+        io.to(socketId).emit('errorMessage', 'Invalid move due to locked positions.');
         return;
       }
 
       // Apply move and get movement data
       const moveData = applyMove(game.gameState, playerId, pieceIndex);
+      console.log(`handleMakeMove: Move applied:`, moveData);
 
       // Check for a win condition
       if (hasPlayerWon(game.gameState, playerId)) {
+        console.log(`handleMakeMove: Player ${playerId} has won the game.`);
         io.in(room).emit('gameOver', { winner: playerId });
         delete games[room]; // End the game
         return;
@@ -228,18 +313,22 @@ module.exports = (io) => {
 
       // Check if the player gets another turn
       const extraTurn = game.gameState.diceValue === 6 || game.gameState.killOccurred;
+      console.log(`handleMakeMove: Extra turn: ${extraTurn}`);
       if (!extraTurn) {
         // Switch turn
         game.gameState.turn = (game.gameState.turn + 1) % game.players.length;
+        console.log(`handleMakeMove: Turn switched to player index ${game.gameState.turn}`);
       }
       game.gameState.diceValue = null; // Reset dice value
       game.gameState.killOccurred = false; // Reset kill flag
 
       // Send updated game state to clients, including movement data
       io.in(room).emit('updateGameState', {
-        gameState: game.gameState,
+        gameState: game.gameState, // This includes lockedPositions
         moveData: moveData,
       });
+
+      console.log(`handleMakeMove: updateGameState emitted to room ${room}`);
     }
 
     /**
@@ -249,13 +338,19 @@ module.exports = (io) => {
      */
     function handleNoMoves(room, socketId) {
       const game = games[room];
-      if (!game) return;
+      if (!game || !game.gameState) {
+        console.log(`handleNoMoves: Game not found for room ${room}`);
+        return;
+      }
 
       const currentPlayer = game.players[game.gameState.turn];
       if (currentPlayer.socketId !== socketId) {
+        console.log(`handleNoMoves: Player ${socketId} attempted to end turn out of turn.`);
         io.to(socketId).emit('errorMessage', 'It is not your turn.');
         return;
       }
+
+      console.log(`handleNoMoves: Player ${currentPlayer.playerId} has no moves.`);
 
       // Switch turn
       game.gameState.turn = (game.gameState.turn + 1) % game.players.length;
@@ -263,6 +358,8 @@ module.exports = (io) => {
 
       // Send updated game state to clients
       io.in(room).emit('updateGameState', { gameState: game.gameState });
+
+      console.log(`handleNoMoves: updateGameState emitted to room ${room}`);
     }
 
     /**
@@ -276,26 +373,52 @@ module.exports = (io) => {
       const currentPosition = gameState.currentPositions[playerId][pieceIndex];
       const diceValue = gameState.diceValue;
 
+      console.log(`validateMove: Player ${playerId}, Piece ${pieceIndex}, Current Position ${currentPosition}, Dice Value ${diceValue}`);
+
       // If the piece is at home position (500+)
       if (currentPosition >= 500) {
+        console.log(`validateMove: Piece is in base.`);
         // Can only move out of home if dice roll is 6
         if (diceValue !== 6) {
+          console.log(`validateMove: Invalid move - Dice value not 6 to exit base.`);
+          return false;
+        }
+        // Additionally, check if the starting position is locked by opponent
+        const startingPosition = START_POSITIONS[playerId];
+        const lockOwner = isPositionLocked(gameState, startingPosition);
+        console.log(`validateMove: Starting position ${startingPosition} lock owner: ${lockOwner}`);
+        if (lockOwner && lockOwner !== playerId) {
+          console.log(`validateMove: Starting position is locked by opponent.`);
+          // Starting position is locked by an opponent; cannot enter
           return false;
         }
         return true;
       }
 
-      // Simulate moving the piece
-      let newPosition = currentPosition;
-      for (let i = 0; i < diceValue; i++) {
-        newPosition = getNextPosition(playerId, newPosition);
+      // Get the path the piece will take
+      const path = getPath(gameState, playerId, currentPosition, diceValue);
+      console.log(`validateMove: Path calculated: ${path}`);
+
+      // Check each position in the path for locks
+      for (const pos of path) {
+        const lockOwner = isPositionLocked(gameState, pos);
+        console.log(`validateMove: Checking position ${pos}, lock owner: ${lockOwner}`);
+        if (lockOwner && lockOwner !== playerId) {
+          // Path is blocked by an opponent's lock
+          console.log(`validateMove: Move blocked by opponent's lock at position ${pos}`);
+          return false;
+        }
       }
 
-      // Check if the new position is beyond the home position
-      if (isBeyondHome(playerId, newPosition)) {
+      // Simulate moving to the final position to check beyond home
+      const finalPosition = path[path.length - 1];
+      console.log(`validateMove: Final position after move: ${finalPosition}`);
+      if (isBeyondHome(playerId, finalPosition)) {
+        console.log(`validateMove: Invalid move - Position ${finalPosition} is beyond home.`);
         return false;
       }
 
+      console.log(`validateMove: Move is valid.`);
       return true;
     }
 
@@ -313,24 +436,35 @@ module.exports = (io) => {
 
       let path = []; // To record the sequence of positions
 
+      console.log(`applyMove: Applying move for Player ${playerId}, Piece ${pieceIndex}, Current Position ${currentPosition}, Dice Value ${diceValue}`);
+
       if (currentPosition >= 500) {
         // Move out of home to starting position
         newPosition = START_POSITIONS[playerId];
         path.push(newPosition);
+        console.log(`applyMove: Piece moved out of base to starting position ${newPosition}`);
       } else {
         // Move piece step by step
         for (let i = 0; i < diceValue; i++) {
           newPosition = getNextPosition(playerId, newPosition);
           path.push(newPosition);
+          console.log(`applyMove: Step ${i + 1}, moved to position ${newPosition}`);
         }
       }
 
       // Update the piece's position
       gameState.currentPositions[playerId][pieceIndex] = newPosition;
+      console.log(`applyMove: Piece ${pieceIndex} new position: ${newPosition}`);
 
       // Check for kills
       const killedPieces = checkForKill(gameState, playerId, newPosition);
       gameState.killOccurred = killedPieces.length > 0;
+      if (gameState.killOccurred) {
+        console.log(`applyMove: Kill occurred:`, killedPieces);
+      }
+
+      // Update locked positions after the move and potential kills
+      updateLockedPositions(gameState);
 
       // Return movement data
       return {
@@ -358,7 +492,7 @@ module.exports = (io) => {
         } else {
           return HOME_POSITIONS[playerId]; // Reached home
         }
-      } else if (currentPosition === 51) {
+      } else if (currentPosition === 51) { // Assuming 51 loops back to 0
         return 0;
       } else {
         return currentPosition + 1;
@@ -392,6 +526,18 @@ module.exports = (io) => {
         return [];
       }
 
+      // Check if the position is locked
+      const lockOwner = isPositionLocked(gameState, newPosition);
+      if (lockOwner) {
+        // If the lock is owned by the moving player, no kill occurs
+        if (lockOwner === playerId) {
+          return [];
+        } else {
+          // Position is locked by an opponent, no kill can occur
+          return [];
+        }
+      }
+
       let killedPieces = [];
 
       // Check all opponent players
@@ -403,6 +549,7 @@ module.exports = (io) => {
               // Send opponent's piece back to base
               gameState.currentPositions[opponentId][index] = BASE_POSITIONS[opponentId][index];
               killedPieces.push({ opponentId, pieceIndex: index });
+              console.log(`checkForKill: Player ${playerId} killed Player ${opponentId}'s piece ${index} at position ${newPosition}`);
             }
           });
         }
