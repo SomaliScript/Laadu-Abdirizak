@@ -275,6 +275,7 @@ export class Ludo {
     const pieces = this.currentPositions[player];
     const diceValue = this.diceValue;
     const eligiblePieces = [];
+    const lockedPieces = this.getLockedPieces(player);
 
     pieces.forEach((currentPosition, pieceIndex) => {
       if (currentPosition === HOME_POSITIONS[player]) {
@@ -283,9 +284,14 @@ export class Ludo {
       }
 
       if (BASE_POSITIONS[player].includes(currentPosition)) {
-        // Piece is in base (home position)
+        // Piece is in base
         if (diceValue === 6) {
-          eligiblePieces.push(pieceIndex);
+          // Check if starting position is blocked by opponent's lock
+          const startingPosition = START_POSITIONS[player];
+          const lockOwner = this.lockedPositions[startingPosition];
+          if (!lockOwner || lockOwner === player) {
+            eligiblePieces.push(pieceIndex);
+          }
         }
         return;
       }
@@ -294,17 +300,74 @@ export class Ludo {
         const index = HOME_ENTRANCE[player].indexOf(currentPosition);
         const stepsToHome = HOME_ENTRANCE[player].length - index;
         if (diceValue > stepsToHome) {
-          // Dice value is too high to reach home
+          // Dice value too high to reach home
           return;
         }
       }
 
-      // All other pieces are eligible
-      eligiblePieces.push(pieceIndex);
+      // Check if moving this piece is blocked by a lock
+      if (!this.isMoveBlocked(player, currentPosition, diceValue)) {
+        eligiblePieces.push(pieceIndex);
+      }
     });
+
+    if (lockedPieces.length > 0) {
+      // Filter eligible pieces to only include locked pieces that can be moved
+      const movableLockedPieces = lockedPieces.filter((pieceIndex) => {
+        const currentPosition = this.currentPositions[player][pieceIndex];
+        const path = this.getPath(player, currentPosition, diceValue);
+        return !path.some((pos) => {
+          const lockOwner = this.lockedPositions[pos];
+          return lockOwner && lockOwner !== player;
+        });
+      });
+
+      if (movableLockedPieces.length > 0) {
+        return movableLockedPieces;
+      }
+      // If no locked pieces can be moved, proceed to highlight other eligible pieces
+    }
 
     return eligiblePieces;
   }
+  
+    /**
+   * Retrieves the indices of the player's locked pieces.
+   * @param {string} player - The player ID ('P1', 'P3').
+   * @returns {Array<number>} - An array of piece indices that are locked.
+   */
+  getLockedPieces(player) {
+    const lockedPieces = [];
+    this.currentPositions[player].forEach((position, index) => {
+      if (this.lockedPositions[position] === player) {
+        lockedPieces.push(index);
+      }
+    });
+    return lockedPieces;
+  }
+  
+    /**
+   * Checks if moving a piece from currentPosition with diceValue is blocked by any locked positions.
+   * @param {string} player - The player ID ('P1', 'P3').
+   * @param {number} currentPosition - The current position of the piece.
+   * @param {number} diceValue - The number of steps to move.
+   * @returns {boolean} - True if the move is blocked, false otherwise.
+   */
+  isMoveBlocked(player, currentPosition, diceValue) {
+    const path = this.getPath(player, currentPosition, diceValue);
+
+    for (const pos of path) {
+      const lockOwner = this.lockedPositions[pos];
+      if (lockOwner && lockOwner !== player) {
+        // Path is blocked by an opponent's lock
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+
 
   /**
    * Handler for when the reset button is clicked.
