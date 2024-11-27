@@ -269,6 +269,7 @@ export class Ludo {
     }
   }
 
+  /*
   /**
    * Determines which pieces are eligible to move.
    */
@@ -276,15 +277,10 @@ export class Ludo {
     const pieces = this.currentPositions[player];
     const diceValue = this.diceValue;
     const eligiblePieces = [];
-    const lockedPieces = this.getLockedPieces(player);
-
-    console.log(`getEligiblePieces: Player ${player}, Dice Value ${diceValue}`);
-    console.log(`getEligiblePieces: Locked Pieces -`, lockedPieces);
 
     pieces.forEach((currentPosition, pieceIndex) => {
       if (currentPosition === HOME_POSITIONS[player]) {
         // Piece already at home
-        console.log(`Piece ${pieceIndex} is already at home.`);
         return;
       }
 
@@ -296,61 +292,26 @@ export class Ludo {
           const lockOwner = this.lockedPositions[startingPosition];
           if (!lockOwner || lockOwner === player) {
             eligiblePieces.push(pieceIndex);
-            console.log(`Piece ${pieceIndex} in base can move out.`);
-          } else {
-            console.log(`Piece ${pieceIndex} in base cannot move out due to locked starting position.`);
           }
-        } else {
-          console.log(`Piece ${pieceIndex} in base cannot move out without rolling a 6.`);
         }
         return;
       }
 
-      if (HOME_ENTRANCE[player].includes(currentPosition)) {
-        const index = HOME_ENTRANCE[player].indexOf(currentPosition);
-        const stepsToHome = HOME_ENTRANCE[player].length - index;
-        if (diceValue > stepsToHome) {
-          // Dice value too high to reach home
-          console.log(`Piece ${pieceIndex} cannot move to home with dice value ${diceValue}.`);
-          return;
-        }
-      }
+      // Calculate the path for the piece
+      const path = this.getPath(player, currentPosition, diceValue);
 
-      // Check if moving this piece is blocked by a lock
-      if (!this.isMoveBlocked(player, currentPosition, diceValue)) {
+      // Check if any position in path is blocked by an opponent's lock
+      const isBlocked = path.some((pos) => {
+        const lockOwner = this.lockedPositions[pos];
+        // Position is locked by opponent
+        return lockOwner && lockOwner !== player;
+      });
+
+      if (!isBlocked) {
         eligiblePieces.push(pieceIndex);
-        console.log(`Piece ${pieceIndex} is eligible to move.`);
-      } else {
-        console.log(`Piece ${pieceIndex} is blocked by an opponent's lock.`);
       }
     });
 
-    if (lockedPieces.length > 0) {
-      // Filter eligible pieces to only include locked pieces that can be moved
-      const movableLockedPieces = lockedPieces.filter((pieceIndex) => {
-        const currentPosition = this.currentPositions[player][pieceIndex];
-        const path = this.getPath(player, currentPosition, diceValue);
-        const canMove = !path.some((pos) => {
-          const lockOwner = this.lockedPositions[pos];
-          return lockOwner && lockOwner !== player;
-        });
-        if (!canMove) {
-          console.log(`Locked Piece ${pieceIndex} cannot be moved.`);
-        } else {
-          console.log(`Locked Piece ${pieceIndex} can be moved.`);
-        }
-        return canMove;
-      });
-
-      if (movableLockedPieces.length > 0) {
-        console.log(`getEligiblePieces: Movable Locked Pieces -`, movableLockedPieces);
-        return movableLockedPieces;
-      }
-      // If no locked pieces can be moved, proceed to highlight other eligible pieces
-      console.log(`getEligiblePieces: No movable locked pieces. Highlighting other eligible pieces.`);
-    }
-
-    console.log(`getEligiblePieces: Eligible Pieces -`, eligiblePieces);
     return eligiblePieces;
   }
     
@@ -361,19 +322,11 @@ export class Ludo {
    */
   getLockedPieces(player) {
     const lockedPieces = [];
-    
-    if (!this.lockedPositions) {
-      console.warn('getLockedPieces: lockedPositions is undefined.');
-      return lockedPieces;
-    }
-
     this.currentPositions[player].forEach((position, index) => {
       if (this.lockedPositions[position] === player) {
         lockedPieces.push(index);
       }
     });
-
-    console.log(`getLockedPieces: Player ${player} has locked pieces at indices -`, lockedPieces);
     return lockedPieces;
   }
     
@@ -413,7 +366,7 @@ export class Ludo {
       pos = this.getNextPosition(player, pos);
       path.push(pos);
 
-      // Stop if the piece reaches home
+      // Stop adding to path if piece reaches home
       if (this.isHomePosition(player, pos)) {
         break;
       }
@@ -422,7 +375,7 @@ export class Ludo {
     return path;
   }
   
-    /**
+  /**
    * Determines if a position is the home position for a player.
    * @param {string} playerId - The player ID ('P1', 'P3').
    * @param {number} position - The position to check.
@@ -433,7 +386,7 @@ export class Ludo {
   }
 
   
-    /**
+  /**
    * Calculates the next position for a piece.
    * @param {string} playerId - The player ID ('P1', 'P3').
    * @param {number} currentPosition - The current position of the piece.

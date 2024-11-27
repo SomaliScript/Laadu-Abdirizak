@@ -151,6 +151,7 @@ module.exports = (io) => {
     /**
      * Updates the lockedPositions in the game state based on currentPositions.
      * A position is locked if a player has two or more pieces on it (excluding base and home positions).
+     * Players cannot lock their own starting positions but can lock opponents' starting positions.
      * @param {Object} gameState - The current game state.
      */
     function updateLockedPositions(gameState) {
@@ -167,6 +168,11 @@ module.exports = (io) => {
             BASE_POSITIONS[playerId].includes(position) ||
             HOME_POSITIONS[playerId] === position
           ) {
+            return;
+          }
+
+          // Skip own starting positions when counting for locks
+          if (START_POSITIONS[playerId] === position) {
             return;
           }
 
