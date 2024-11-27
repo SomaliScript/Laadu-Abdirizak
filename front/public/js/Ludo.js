@@ -106,6 +106,7 @@ export class Ludo {
 
     // Update local game state
     this.currentPositions = gameState.currentPositions;
+    this.lockedPositions = gameState.lockedPositions || {}; // Store locked positions
     this.turn = gameState.turn;
     this.diceValue = gameState.diceValue;
 
