@@ -558,65 +558,101 @@ module.exports = (io) => {
       return killedPieces;
     }
     
-      /**
-     * Validates a player's move based on the game state and rules.
-     * @param {Object} gameState - The current game state.
-     * @param {string} playerId - The player ID ('P1', 'P3').
-     * @param {number} pieceIndex - The index of the piece being moved (0-3).
-     * @returns {boolean} - True if the move is valid, false otherwise.
-     */
-    function validateMove(gameState, playerId, pieceIndex) {
-      const currentPosition = gameState.currentPositions[playerId][pieceIndex];
-      const diceValue = gameState.diceValue;
+    /**
+   * Validates a player's move based on the game state and rules.
+   * @param {Object} gameState - The current game state.
+   * @param {string} playerId - The player ID ('P1', 'P3').
+   * @param {number} pieceIndex - The index of the piece being moved (0-3).
+   * @returns {boolean} - True if the move is valid, false otherwise.
+   */
+  function validateMove(gameState, playerId, pieceIndex) {
+    const currentPosition = gameState.currentPositions[playerId][pieceIndex];
+    const diceValue = gameState.diceValue;
 
-      console.log(`validateMove: Player ${playerId}, Piece ${pieceIndex}, Current Position ${currentPosition}, Dice Value ${diceValue}`);
+    console.log(`validateMove: Player ${playerId}, Piece ${pieceIndex}, Current Position ${currentPosition}, Dice Value ${diceValue}`);
 
-      // If the piece is at home position (500+)
-      if (currentPosition >= 500) {
-        console.log(`validateMove: Piece is in base.`);
-        // Can only move out of home if dice roll is 6
-        if (diceValue !== 6) {
-          console.log(`validateMove: Invalid move - Dice value not 6 to exit base.`);
-          return false;
-        }
-        // Additionally, check if the starting position is locked by opponent
-        const startingPosition = START_POSITIONS[playerId];
-        const lockOwner = isPositionLocked(gameState, startingPosition);
-        console.log(`validateMove: Starting position ${startingPosition} lock owner: ${lockOwner}`);
-        if (lockOwner && lockOwner !== playerId) {
-          console.log(`validateMove: Starting position is locked by opponent.`);
-          // Starting position is locked by an opponent; cannot enter
-          return false;
-        }
-        return true;
-      }
-
-      // Get the path the piece will take
-      const path = getPath(gameState, playerId, currentPosition, diceValue);
-      console.log(`validateMove: Path calculated: ${path}`);
-
-      // Check each position in the path for locks
-      for (const pos of path) {
-        const lockOwner = isPositionLocked(gameState, pos);
-        console.log(`validateMove: Checking position ${pos}, lock owner: ${lockOwner}`);
-        if (lockOwner && lockOwner !== playerId) {
-          // Path is blocked by an opponent's lock
-          console.log(`validateMove: Move blocked by opponent's lock at position ${pos}`);
-          return false;
-        }
-      }
-
-      // Simulate moving to the final position to check beyond home
-      const finalPosition = path[path.length - 1];
-      console.log(`validateMove: Final position after move: ${finalPosition}`);
-      if (isBeyondHome(playerId, finalPosition)) {
-        console.log(`validateMove: Invalid move - Position ${finalPosition} is beyond home.`);
+    // If the piece is at home position (500+)
+    if (currentPosition >= 500) {
+      console.log(`validateMove: Piece is in base.`);
+      // Can only move out of home if dice roll is 6
+      if (diceValue !== 6) {
+        console.log(`validateMove: Invalid move - Dice value not 6 to exit base.`);
         return false;
       }
-
-      console.log(`validateMove: Move is valid.`);
+      // Additionally, check if the starting position is locked by opponent
+      const startingPosition = START_POSITIONS[playerId];
+      const lockOwner = isPositionLocked(gameState, startingPosition);
+      console.log(`validateMove: Starting position ${startingPosition} lock owner: ${lockOwner}`);
+      if (lockOwner && lockOwner !== playerId) {
+        console.log(`validateMove: Starting position is locked by opponent.`);
+        // Starting position is locked by an opponent; cannot enter
+        return false;
+      }
       return true;
     }
+
+    // Get the path the piece will take
+    const path = getPath(gameState, playerId, currentPosition, diceValue);
+    console.log(`validateMove: Path calculated: ${path}`);
+
+    // Check each position in the path for locks
+    for (const pos of path) {
+      const lockOwner = isPositionLocked(gameState, pos);
+      console.log(`validateMove: Checking position ${pos}, lock owner: ${lockOwner}`);
+      if (lockOwner && lockOwner !== playerId) {
+        // Path is blocked by an opponent's lock
+        console.log(`validateMove: Move blocked by opponent's lock at position ${pos}`);
+        return false;
+      }
+    }
+
+    // Simulate moving to the final position to check beyond home
+    const finalPosition = path[path.length - 1];
+    console.log(`validateMove: Final position after move: ${finalPosition}`);
+    if (isBeyondHome(playerId, finalPosition)) {
+      console.log(`validateMove: Invalid move - Position ${finalPosition} is beyond home.`);
+      return false;
+    }
+
+    console.log(`validateMove: Move is valid.`);
+    return true;
+  }
+  
+    /**
+   * Generates the path a piece will take based on currentPosition and diceValue.
+   * @param {Object} gameState - The current game state.
+   * @param {string} playerId - The player ID ('P1', 'P3').
+   * @param {number} currentPosition - The current position of the piece.
+   * @param {number} diceValue - The number of steps to move.
+   * @returns {Array<number>} - An array of positions the piece will traverse.
+   */
+  function getPath(gameState, playerId, currentPosition, diceValue) {
+    const path = [];
+    let pos = currentPosition;
+
+    for (let i = 0; i < diceValue; i++) {
+      pos = getNextPosition(playerId, pos);
+      path.push(pos);
+
+      // Check if the piece has reached home
+      if (isHomePosition(playerId, pos)) {
+        break; // Stop adding to path once home is reached
+      }
+    }
+
+    return path;
+  }
+
+  /**
+   * Determines if a position is the home position for a player.
+   * @param {string} playerId - The player ID ('P1', 'P3').
+   * @param {number} position - The position to check.
+   * @returns {boolean} - True if it's the home position, false otherwise.
+   */
+  function isHomePosition(playerId, position) {
+    return HOME_POSITIONS[playerId] === position;
+  }
+
 
 
     /**
