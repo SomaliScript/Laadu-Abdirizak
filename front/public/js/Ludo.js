@@ -398,6 +398,29 @@ export class Ludo {
     return false;
   }
 
+  /**
+   * Generates the path a piece will take based on currentPosition and diceValue.
+   * @param {string} player - The player ID ('P1', 'P3').
+   * @param {number} currentPosition - The current position of the piece.
+   * @param {number} diceValue - The number of steps to move.
+   * @returns {Array<number>} - An array of positions the piece will traverse.
+   */
+  getPath(player, currentPosition, diceValue) {
+    const path = [];
+    let pos = currentPosition;
+
+    for (let i = 0; i < diceValue; i++) {
+      pos = this.getNextPosition(player, pos);
+      path.push(pos);
+
+      // Stop if the piece reaches home
+      if (this.isHomePosition(player, pos)) {
+        break;
+      }
+    }
+
+    return path;
+  }
 
   /**
    * Handler for when the reset button is clicked.
