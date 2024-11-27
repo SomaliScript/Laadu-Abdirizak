@@ -19,6 +19,7 @@ export class Ludo {
     this.playerId = null;
     this.room = null;
     this.currentPositions = {};
+    this.lockedPositions = {}
     this.turn = null;
     this.diceValue = null;
     this.state = null;
