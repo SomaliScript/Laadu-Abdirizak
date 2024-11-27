@@ -421,6 +421,41 @@ export class Ludo {
 
     return path;
   }
+  
+    /**
+   * Determines if a position is the home position for a player.
+   * @param {string} playerId - The player ID ('P1', 'P3').
+   * @param {number} position - The position to check.
+   * @returns {boolean} - True if it's the home position, false otherwise.
+   */
+  isHomePosition(playerId, position) {
+    return HOME_POSITIONS[playerId] === position;
+  }
+
+  
+    /**
+   * Calculates the next position for a piece.
+   * @param {string} playerId - The player ID ('P1', 'P3').
+   * @param {number} currentPosition - The current position of the piece.
+   * @returns {number} - The next position of the piece.
+   */
+  getNextPosition(playerId, currentPosition) {
+    if (currentPosition === TURNING_POINTS[playerId]) {
+      return HOME_ENTRANCE[playerId][0];
+    } else if (HOME_ENTRANCE[playerId].includes(currentPosition)) {
+      const index = HOME_ENTRANCE[playerId].indexOf(currentPosition);
+      if (index + 1 < HOME_ENTRANCE[playerId].length) {
+        return HOME_ENTRANCE[playerId][index + 1];
+      } else {
+        return HOME_POSITIONS[playerId]; // Reached home
+      }
+    } else if (currentPosition === 51) { // Assuming 51 loops back to 0
+      return 0;
+    } else {
+      return currentPosition + 1;
+    }
+  }
+
 
   /**
    * Handler for when the reset button is clicked.
